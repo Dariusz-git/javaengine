@@ -211,6 +211,14 @@ public class Renderer {
         GL11.glLoadMatrixf(matrixBuffer);
     }
 
+    /** Convert float array to FloatBuffer and reset position. */
+    private FloatBuffer toFloatBuffer(FloatBuffer buffer, float[] array) {
+        buffer.clear();
+        buffer.put(array);
+        buffer.flip();
+        return buffer;
+    }
+
     public void render(List<CelestialBody> bodies) {
         processInput();
 
@@ -220,6 +228,7 @@ public class Renderer {
         setupCamera();
 
         for (CelestialBody body : bodies) {
+            // Set color for this body
             float[] color = colorFor(body.getName());
             GL11.glColor3f(color[0], color[1], color[2]);
 
@@ -239,12 +248,13 @@ public class Renderer {
         GLFW.glfwPollEvents();
     }
 
+
     private float[] colorFor(String name) {
         switch (name) {
-            case "Sun":   return new float[]{1.0f, 1.0f, 0.0f};
-            case "Earth": return new float[]{0.0f, 0.5f, 1.0f};
-            case "Mars":  return new float[]{1.0f, 0.5f, 0.0f};
-            default:      return new float[]{1.0f, 1.0f, 1.0f};
+            case "Sun":   return new float[]{1.0f, 1.0f, 0.0f};     // Bright yellow
+            case "Earth": return new float[]{0.0f, 0.5f, 1.0f};     // Blue
+            case "Mars":  return new float[]{1.0f, 0.5f, 0.0f};     // Orange
+            default:      return new float[]{0.8f, 0.8f, 0.8f};     // Gray
         }
     }
 

@@ -9,7 +9,6 @@ import java.util.List;
 /**
  * Core physics engine that handles gravitational interactions
  * Uses Newton's law of universal gravitation: F = G * (m1 * m2) / r^2
- *
  * All calculations are done in double precision. Astronomical masses
  * (e.g. the Sun is ~2e30 kg) overflow a float when multiplied together,
  * producing Infinity and then NaN, so float must not be used here.
