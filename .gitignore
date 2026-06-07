@@ -1,0 +1,29 @@
+# Maven
+target/
+.m2/
+*.jar
+*.war
+*.ear
+
+# IDE
+.idea/
+.vscode/
+*.iml
+*.iws
+*.ipr
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Build
+build/
+dist/
+
+# Logs
+*.log
+
+# Dependencies
+.classpath
+.project
+.settings/

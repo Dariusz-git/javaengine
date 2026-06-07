@@ -1,0 +1,46 @@
+stages:
+  - build
+  - test
+  - package
+
+variables:
+  MAVEN_OPTS: "-Dmaven.repo.local=$CI_PROJECT_DIR/.m2/repository"
+  MAVEN_CLI_OPTS: "-s $CI_PROJECT_DIR/.m2/settings.xml --batch-mode --errors --fail-at-end --show-version"
+
+cache:
+  paths:
+    - .m2/repository/
+    - target/
+
+build:
+  stage: build
+  image: maven:3.9-eclipse-temurin-17
+  script:
+    - mvn clean compile $MAVEN_CLI_OPTS
+  artifacts:
+    paths:
+      - target/
+    expire_in: 1 hour
+
+test:
+  stage: test
+  image: maven:3.9-eclipse-temurin-17
+  script:
+    - mvn test $MAVEN_CLI_OPTS
+  artifacts:
+    reports:
+      junit: target/surefire-reports/TEST-*.xml
+    expire_in: 30 days
+
+package:
+  stage: package
+  image: maven:3.9-eclipse-temurin-17
+  script:
+    - mvn package -DskipTests $MAVEN_CLI_OPTS
+  artifacts:
+    paths:
+      - target/*.jar
+    expire_in: 30 days
+  only:
+    - main
+    - tags
