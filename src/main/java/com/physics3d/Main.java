@@ -53,6 +53,7 @@ public class Main {
         // Main simulation loop
         double deltaTime = 0.01; // 10ms per frame
         long lastTime = System.nanoTime();
+        long lastLog = System.nanoTime();
         
         while (!renderer.shouldClose()) {
             long currentTime = System.nanoTime();
@@ -66,6 +67,16 @@ public class Main {
             
             // Update physics
             engine.update(deltaTime);
+            
+            // TEMP diagnostics: print positions once per second
+            if (currentTime - lastLog > 1_000_000_000L) {
+                lastLog = currentTime;
+                for (CelestialBody b : engine.getBodies()) {
+                    Vector3f p = b.getPosition();
+                    System.out.printf("%s pos=(%.3e, %.3e, %.3e)%n", b.getName(), p.x, p.y, p.z);
+                }
+                System.out.println("---");
+            }
             
             // Render
             renderer.render(engine.getBodies());
