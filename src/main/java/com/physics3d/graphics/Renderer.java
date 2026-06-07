@@ -2,6 +2,7 @@ package com.physics3d.graphics;
 
 import com.physics3d.model.CelestialBody;
 import org.joml.Matrix4f;
+import org.joml.Vector3f;
 import org.lwjgl.BufferUtils;
 import org.lwjgl.glfw.GLFW;
 import org.lwjgl.glfw.GLFWErrorCallback;
@@ -33,6 +34,11 @@ public class Renderer {
     private static final float WORLD_SCALE = 1e-9f;
     // Minimum drawn radius in scene units so bodies stay visible at system scale
     private static final float MIN_DRAW_RADIUS = 5e9f * WORLD_SCALE;
+    // Dodaj te pola na poziomie klasy (za minimalnym promieniem):
+    private Vector3f sunPosition = new Vector3f(0, 0, 0);  // Sun position in world space
+    private static final Vector3f LIGHT_DIRECTION = new Vector3f(0, 1, 0);  // Up vector for ambient
+    private static final float[] AMBIENT_COLOR = {0.3f, 0.3f, 0.3f};
+    private static final float[] DIFFUSE_INTENSITY = {0.7f, 0.7f, 0.7f};
     // Sphere tessellation
     private static final int SPHERE_STACKS = 16;
     private static final int SPHERE_SLICES = 24;
@@ -227,16 +233,47 @@ public class Renderer {
         setupProjection();
         setupCamera();
 
+        // Find sun position first
         for (CelestialBody body : bodies) {
-            // Set color for this body
-            float[] color = colorFor(body.getName());
-            GL11.glColor3f(color[0], color[1], color[2]);
+            if ("Sun".equals(body.getName())) {
+                Vector3f pos = body.getPosition();
+                sunPosition.set(pos.x * WORLD_SCALE, pos.y * WORLD_SCALE, pos.z * WORLD_SCALE);
+                break;
+            }
+        }
 
-            var pos = body.getPosition();
+        for (CelestialBody body : bodies) {
+            Vector3f pos = body.getPosition();
             float x = pos.x * WORLD_SCALE;
             float y = pos.y * WORLD_SCALE;
             float z = pos.z * WORLD_SCALE;
             float r = Math.max(body.getRadius() * WORLD_SCALE, MIN_DRAW_RADIUS);
+
+            float[] baseColor = colorFor(body.getName());
+
+            if ("Sun".equals(body.getName())) {
+                // Sun emits light: full brightness
+                GL11.glColor3f(baseColor[0], baseColor[1], baseColor[2]);
+            } else {
+                // Planets: apply Lambertian diffuse lighting from Sun
+                Vector3f bodyPos = new Vector3f(x, y, z);
+                Vector3f toSun = new Vector3f(sunPosition).sub(bodyPos);
+                float distToSun = toSun.length();
+                if (distToSun > 0.001f) {
+                    toSun.normalize();
+                }
+
+                // Surface normal (from center outward) - use approximate normal
+                // For a sphere at position bodyPos, normal at surface points outward
+                float diffuse = Math.max(0.2f, toSun.dot(new Vector3f(x, y, z).normalize()) * 0.5f + 0.5f);
+
+                // Apply lighting: ambient + diffuse
+                float litR = baseColor[0] * (0.3f + diffuse * 0.7f);
+                float litG = baseColor[1] * (0.3f + diffuse * 0.7f);
+                float litB = baseColor[2] * (0.3f + diffuse * 0.7f);
+
+                GL11.glColor3f(litR, litG, litB);
+            }
 
             GL11.glPushMatrix();
             GL11.glTranslatef(x, y, z);
