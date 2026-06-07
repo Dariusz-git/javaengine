@@ -94,7 +94,8 @@ public class Renderer {
             }
             
             var pos = body.getPosition();
-            GL11.glVertex3f(pos.x, pos.y, pos.z);
+            // Bodies move in the XZ plane; map X->screen X and Z->screen Y
+            GL11.glVertex3f(pos.x, pos.z, pos.y);
         }
         
         GL11.glEnd();
