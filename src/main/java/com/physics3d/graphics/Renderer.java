@@ -58,12 +58,12 @@ public class Renderer {
         GLFW.glfwShowWindow(window);
     }
     
+    // Minimum drawn radius in world units so bodies are visible at this zoom
+    private static final float MIN_DRAW_RADIUS = 5e9f;
+
     private void initOpenGL() {
         GL.createCapabilities();
         GL11.glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
-        GL11.glEnable(GL11.GL_DEPTH_TEST);
-        GL11.glEnable(GL11.GL_POINT_SMOOTH);
-        GL11.glHint(GL11.GL_POINT_SMOOTH_HINT, GL11.GL_NICEST);
     }
     
     public void render(List<CelestialBody> bodies) {
@@ -77,9 +77,8 @@ public class Renderer {
         GL11.glMatrixMode(GL11.GL_MODELVIEW);
         GL11.glLoadIdentity();
         
-        // Draw bodies as points
-        GL11.glPointSize(5.0f);
-        GL11.glBegin(GL11.GL_POINTS);
+        // Draw bodies as quads in world space (visible regardless of driver point support)
+        GL11.glBegin(GL11.GL_QUADS);
         
         for (CelestialBody body : bodies) {
             // Color based on body name
@@ -95,7 +94,14 @@ public class Renderer {
             
             var pos = body.getPosition();
             // Bodies move in the XZ plane; map X->screen X and Z->screen Y
-            GL11.glVertex3f(pos.x, pos.z, pos.y);
+            float cx = pos.x;
+            float cy = pos.z;
+            float r = Math.max(body.getRadius(), MIN_DRAW_RADIUS);
+            
+            GL11.glVertex3f(cx - r, cy - r, 0.0f);
+            GL11.glVertex3f(cx + r, cy - r, 0.0f);
+            GL11.glVertex3f(cx + r, cy + r, 0.0f);
+            GL11.glVertex3f(cx - r, cy + r, 0.0f);
         }
         
         GL11.glEnd();
