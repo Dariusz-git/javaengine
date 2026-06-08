@@ -59,6 +59,11 @@ public class Main {
             deltaTime = (currentTime - lastTime) / 1e9;
             lastTime = currentTime;
             
+            // Clamp to avoid a huge first/lag frame blowing up the integration
+            if (deltaTime > 0.05) {
+                deltaTime = 0.05;
+            }
+            
             // Update physics
             engine.update(deltaTime);
             
