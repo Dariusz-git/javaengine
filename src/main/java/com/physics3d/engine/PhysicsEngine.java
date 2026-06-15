@@ -4,7 +4,9 @@ import com.physics3d.model.CelestialBody;
 import org.joml.Vector3f;
 
 import java.util.ArrayList;
+import java.util.LinkedList;
 import java.util.List;
+import java.util.Queue;
 
 /**
  * Core physics engine that handles gravitational interactions
@@ -20,6 +22,10 @@ public class PhysicsEngine {
 
     private final List<CelestialBody> bodies;
     private double[][] forces; // [bodyIndex][x,y,z]
+
+    private int recordCounter = 0;
+    private static final int RECORD_INTERVAL = 5; // Zapisuj co 5 iteracji
+
 
     public PhysicsEngine() {
         this.bodies = new ArrayList<>();
@@ -63,14 +69,31 @@ public class PhysicsEngine {
             double py = p.y + vy * dt;
             double pz = p.z + vz * dt;
             body.setPosition(new Vector3f((float) px, (float) py, (float) pz));
+            // Record trail position for rendering
+            // body.recordPosition(); funkcja wyłączona, orbita jest teraz generowana zały czas nie trzeba zapisywać
+            recordCounter++;
+            if (recordCounter % RECORD_INTERVAL == 0) {
+                body.recordPosition();
+            }
         }
+
     }
 
     private void calculateGravitationalForces() {
+
         for (int i = 0; i < bodies.size(); i++) {
             for (int j = i + 1; j < bodies.size(); j++) {
                 CelestialBody body1 = bodies.get(i);
                 CelestialBody body2 = bodies.get(j);
+
+                // ⭐ NOWE: Tylko Słońce przyciąga inne obiekty
+                String name1 = body1.getName();
+                String name2 = body2.getName();
+
+                // Jeśli ani body1 ani body2 to nie Słońce, pomiń
+                if (!name1.equals("Sun") && !name2.equals("Sun")) {
+                    continue;
+                }
 
                 // Vector from body1 to body2 (double precision)
                 double dx = (double) body2.getPosition().x - body1.getPosition().x;
@@ -84,8 +107,8 @@ public class PhysicsEngine {
 
                 // F = G * (m1 * m2) / r^2  (computed in double to avoid overflow)
                 double forceMagnitude = GRAVITATIONAL_CONSTANT
-                    * ((double) body1.getMass() * (double) body2.getMass())
-                    / (distance * distance);
+                        * ((double) body1.getMass() * (double) body2.getMass())
+                        / (distance * distance);
 
                 // Normalized direction * magnitude
                 double fx = (dx / distance) * forceMagnitude;
@@ -105,5 +128,101 @@ public class PhysicsEngine {
 
     public List<CelestialBody> getBodies() {
         return bodies;
+    }
+
+    /**
+     * Pre-compute orbital path for a body over a given time period
+     * Returns the positions along the orbit
+     */
+    public Queue<Vector3f> computeOrbitalPath(CelestialBody body, double timespan, int numPoints) {
+        // Save original state
+        Vector3f origPos = new Vector3f(body.getPosition());
+        Vector3f origVel = new Vector3f(body.getVelocity());
+
+        Queue<Vector3f> orbitPositions = new LinkedList<>();
+        double dt = timespan / numPoints;
+
+        // Zmień na (mniejszy timestep = większa dokładność):
+        double smallDt = dt / TIME_SCALE / 10.0; // 10x mniejszy krok
+        for (int j = 0; j < 10; j++) {
+            this.update(smallDt);
+        }
+        orbitPositions.add(new Vector3f(body.getPosition()));
+
+        // Simulate forward and record positions
+        for (int i = 0; i < numPoints; i++) {
+            orbitPositions.add(new Vector3f(body.getPosition()));
+            this.update(dt / TIME_SCALE); // Use smaller timestep for accuracy
+        }
+
+        // Restore original state
+        body.setPosition(origPos);
+        body.setVelocity(origVel);
+
+        return orbitPositions;
+    }
+
+
+    /**
+     * Generate perfect elliptical orbit using Kepler's equation
+     * @param body Body to generate orbit for
+     * @param sunPosition Position of the sun
+     * @param sunMass Mass of the sun
+     * @param numPoints Number of points to generate
+     * @return Queue of positions forming the elliptical orbit
+     */
+    public Queue<Vector3f> generateKeplerianOrbit(CelestialBody body, Vector3f sunPosition, double sunMass, int numPoints) {
+        Queue<Vector3f> orbitPositions = new LinkedList<>();
+
+        double a = body.getSemiMajorAxis();
+        double e = body.getEccentricity();
+        double i = body.getInclination();        // Inclination
+        double ascNode = body.getAscendingNode(); // Ascending node
+        double argPeri = body.getArgOfPericenter(); // Arg of pericenter
+        double meanAnom = body.getMeanAnomaly();  // Mean anomaly (start position)
+
+        if (a < 1e6) {
+            System.out.println("WARNING: " + body.getName() + " has invalid orbit");
+            return orbitPositions;
+        }
+
+        // Generate orbit
+        for (int idx = 0; idx <= numPoints; idx++) {
+            double theta = meanAnom + (idx / (double) numPoints) * 2 * Math.PI;
+
+            // Kepler equation: r = a(1-e²) / (1 + e*cos(θ))
+            double r_polar = (a * (1 - e * e)) / (1 + e * Math.cos(theta));
+
+            // Współrzędne w płaszczyźnie orbity (XZ plane)
+            double x_orb = r_polar * Math.cos(theta);
+            double z_orb = r_polar * Math.sin(theta);
+            double y_orb = 0;
+
+            // ⭐ Rotacja o argument pericenter (ω) - wokół Y osi
+            double x_rot = x_orb * Math.cos(argPeri) - z_orb * Math.sin(argPeri);
+            double z_rot = x_orb * Math.sin(argPeri) + z_orb * Math.cos(argPeri);
+            double y_rot = y_orb;
+
+            // ⭐ Rotacja o inclination (i) - wokół X osi (pochyla XZ->XY)
+            double x_3d = x_rot;
+            double y_3d = y_rot * Math.cos(i) - z_rot * Math.sin(i);
+            double z_3d = y_rot * Math.sin(i) + z_rot * Math.cos(i);
+
+            // ⭐ Rotacja o ascending node (Ω) - wokół Y osi
+            double x_final = x_3d * Math.cos(ascNode) - z_3d * Math.sin(ascNode);
+            double z_final = x_3d * Math.sin(ascNode) + z_3d * Math.cos(ascNode);
+            double y_final = y_3d;
+
+            // Przesuń do pozycji Słońca
+            Vector3f point = new Vector3f(
+                    (float)(sunPosition.x + x_final),
+                    (float)(sunPosition.y + y_final),
+                    (float)(sunPosition.z + z_final)
+            );
+
+            orbitPositions.add(point);
+        }
+
+        return orbitPositions;
     }
 }

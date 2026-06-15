@@ -87,3 +87,20 @@ Where:
 ## License
 
 MIT License
+
+
+Plan
+Orbital trails - rysować ścieżkę za każdą planetą
+HUD z informacjami - wyświetlać nazwę planety, prędkość, masę
+Symulacja przyspieszenia czasu - klawisz +/- do szybszej/wolniejszej symulacji
+Więcej planet - dodać Wenus, Jowisza, Saturna itp.
+
+Collision detection - wykrywanie zderzeń między planetami
+Konfiguracja ze scenariuszy - wczytać z pliku JSON/XML zamiast hardcode'u
+Śledzenie wybranej planety - kamera autom. podąża za planetą
+Lepsza fizyka - Verlet integration zamiast Eulera
+
+Shader rendering - OpenGL shaders zamiast fixed-function pipeline
+Textury planet - dodać realističtyczne tekstury
+Barycentric system - symulacja systemów binarnych
+Particle effects - efekty dla zderzeń lub atmosfery

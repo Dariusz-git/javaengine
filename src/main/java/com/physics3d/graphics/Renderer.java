@@ -11,6 +11,7 @@ import org.lwjgl.opengl.GL11;
 
 import java.nio.FloatBuffer;
 import java.util.List;
+import java.util.Queue;
 
 /**
  * Handles rendering of the 3D scene using OpenGL (fixed-function GL11).
@@ -19,7 +20,7 @@ import java.util.List;
  *   - Left mouse drag: rotate around the look-at target (azimuth / elevation)
  *   - Scroll wheel:    zoom in / out (camera distance)
  *   - WASD keys:       pan the look-at target in the view plane
- *
+ *   - T key: toggle orbits
  * World coordinates are astronomical (~1e11 m). Those magnitudes lose precision
  * in float GL matrices, so the scene is uniformly scaled down by WORLD_SCALE
  * before being submitted to OpenGL.
@@ -42,6 +43,8 @@ public class Renderer {
     // Sphere tessellation
     private static final int SPHERE_STACKS = 16;
     private static final int SPHERE_SLICES = 24;
+
+    private boolean showTrails = true; // Toggle with T key
 
     // ---- Orbit camera state ----
     private float camDistance = 800.0f;     // distance from target, in scene units
@@ -91,7 +94,13 @@ public class Renderer {
             if (key == GLFW.GLFW_KEY_ESCAPE && action == GLFW.GLFW_RELEASE) {
                 shouldClose = true;
             }
+
+            if (key == GLFW.GLFW_KEY_T && action == GLFW.GLFW_RELEASE) {
+                showTrails = !showTrails;
+            }
         });
+
+
 
         GLFW.glfwSetWindowCloseCallback(window, w -> shouldClose = true);
 
@@ -225,6 +234,8 @@ public class Renderer {
         return buffer;
     }
 
+
+
     public void render(List<CelestialBody> bodies) {
         processInput();
 
@@ -241,6 +252,74 @@ public class Renderer {
                 break;
             }
         }
+        // Draw theoretical orbits (idealne elipsy)
+        GL11.glColor3f(0.3f, 0.3f, 0.5f);  // Ciemniejszy kolor
+        for (CelestialBody body : bodies) {
+            Queue<Vector3f> theoretical = body.getTrail().getTheoreticalOrbit();
+            if (theoretical.size() > 1) {
+                GL11.glBegin(GL11.GL_LINE_STRIP);
+                for (Vector3f pos : theoretical) {
+                    GL11.glVertex3f(pos.x * WORLD_SCALE, pos.y * WORLD_SCALE, pos.z * WORLD_SCALE);
+                }
+                GL11.glEnd();
+            }
+        }
+
+// Draw actual trajectory (z symulacji)
+        GL11.glColor3f(0.8f, 0.8f, 0.2f);  // Jaśniejszy kolor
+        for (CelestialBody body : bodies) {
+            Queue<Vector3f> actual = body.getTrail().getPositions();
+            if (actual.size() > 1) {
+                GL11.glBegin(GL11.GL_LINE_STRIP);
+                for (Vector3f pos : actual) {
+                    GL11.glVertex3f(pos.x * WORLD_SCALE, pos.y * WORLD_SCALE, pos.z * WORLD_SCALE);
+                }
+                GL11.glEnd();
+            }
+        }
+        // Draw orbital trails
+        // Draw orbital trails
+        if (showTrails) {
+            GL11.glColor3f(0.5f, 0.5f, 0.5f);
+            GL11.glLineWidth(1.0f);
+            GL11.glDisable(GL11.GL_DEPTH_TEST);
+
+            for (CelestialBody body : bodies) {
+                Queue<Vector3f> theoretical = body.getTrail().getTheoreticalOrbit();
+                if (theoretical.size() > 1) {
+                    GL11.glColor3f(0.3f, 0.3f, 0.6f);  // Ciemniejsza - teoretyczna
+                    GL11.glBegin(GL11.GL_LINE_STRIP);
+
+                    Vector3f[] theoryArray = theoretical.toArray(new Vector3f[0]);
+                    for (Vector3f pos : theoryArray) {
+                        GL11.glVertex3f(pos.x * WORLD_SCALE, pos.y * WORLD_SCALE, pos.z * WORLD_SCALE);
+                    }
+                    // Zamknij teoretyczną orbitę
+                    if (theoryArray.length > 0) {
+                        GL11.glVertex3f(theoryArray[0].x * WORLD_SCALE, theoryArray[0].y * WORLD_SCALE, theoryArray[0].z * WORLD_SCALE);
+                    }
+                    GL11.glEnd();
+                }
+
+
+                // ⭐ POTEM rysuj rzeczywistą trajektorię (z symulacji)
+                Queue<Vector3f> positions = body.getTrail().getPositions();
+                if (positions.size() > 1) {
+                    GL11.glColor3f(0.8f, 0.8f, 0.2f);  // Jaśniejsza - rzeczywista
+                    GL11.glBegin(GL11.GL_LINE_STRIP);
+                    Vector3f[] posArray = positions.toArray(new Vector3f[0]);
+                    for (Vector3f pos : posArray) {
+                        GL11.glVertex3f(pos.x * WORLD_SCALE, pos.y * WORLD_SCALE, pos.z * WORLD_SCALE);
+                    }
+                    GL11.glEnd();
+                }
+            }
+
+            GL11.glEnable(GL11.GL_DEPTH_TEST);
+            GL11.glLineWidth(1.0f);
+        }
+
+
 
         for (CelestialBody body : bodies) {
             Vector3f pos = body.getPosition();
@@ -321,6 +400,8 @@ public class Renderer {
             }
             GL11.glEnd();
         }
+
+
     }
 
     public boolean shouldClose() {
@@ -331,4 +412,6 @@ public class Renderer {
         GLFW.glfwDestroyWindow(window);
         GLFW.glfwTerminate();
     }
+
+
 }
