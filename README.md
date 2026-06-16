@@ -64,6 +64,7 @@ F = G * (m1 * m2) / r²
 ```
 
 Where:
+
 - G = 6.674 × 10⁻¹¹ N·m²/kg²
 - m1, m2 = masses of the bodies
 - r = distance between bodies
@@ -72,9 +73,9 @@ Where:
 
 - [ ] Add more celestial bodies (Venus, Jupiter, Saturn, etc.)
 - [ ] Implement collision detection
-- [ ] Add camera controls for better visualization
+- [x] Add camera controls for better visualization
 - [x] Implement orbital trails
-- [ ] Add time acceleration/deceleration controls
+- [x] Add time acceleration/deceleration controls
 - [ ] Improve rendering with textures and lighting
 - [ ] Add configuration file support for custom scenarios
 
@@ -87,7 +88,6 @@ Where:
 ## License
 
 MIT License
-
 
 Plan
 Orbital trails - rysować ścieżkę za każdą planetą

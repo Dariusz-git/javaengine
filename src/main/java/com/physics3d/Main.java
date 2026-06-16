@@ -77,6 +77,7 @@ public class Main {
 
         // Initialize renderer
         Renderer renderer = new Renderer("Solar System Simulator", 1280, 720);
+        renderer.setPhysicsEngine(engine);
         
         // Main simulation loop
         double deltaTime = 0.01; // 10ms per frame

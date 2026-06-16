@@ -17,8 +17,18 @@ import java.util.Queue;
  */
 public class PhysicsEngine {
     private static final double GRAVITATIONAL_CONSTANT = 6.674e-11;
-    private static final double TIME_SCALE = 1e5; // Speed up simulation
+    private static final double DEFAULT_TIME_SCALE = 1e5; // Default simulation speed
+    private static final double MIN_TIME_SCALE = 0;       // Pause
+    private static final double MAX_TIME_SCALE = 1e8;    // Upper limit to prevent instability
     private static final double MIN_DISTANCE = 1e6; // Avoid singularity
+
+    private double timeScale = DEFAULT_TIME_SCALE;
+
+    // Universe age tracking - starts at the current real age of the universe (~13.82 billion years)
+    // and accumulates simulated time as the simulation runs.
+    private static final double SECONDS_PER_YEAR = 365.25 * 24.0 * 3600.0;
+    private static final double INITIAL_UNIVERSE_AGE_YEARS = 13.823473323e9;
+    private double universeAgeSeconds = INITIAL_UNIVERSE_AGE_YEARS * SECONDS_PER_YEAR;
 
     private final List<CelestialBody> bodies;
     private double[][] forces; // [bodyIndex][x,y,z]
@@ -44,7 +54,10 @@ public class PhysicsEngine {
         // Calculate gravitational forces between all bodies
         calculateGravitationalForces();
 
-        double dt = deltaTime * TIME_SCALE;
+        double dt = deltaTime * timeScale;
+
+        // Accumulate simulated time into the universal age tracker
+        universeAgeSeconds += dt;
 
         // Update positions and velocities (Euler integration, in double)
         for (int i = 0; i < n; i++) {
@@ -143,7 +156,7 @@ public class PhysicsEngine {
         double dt = timespan / numPoints;
 
         // Zmień na (mniejszy timestep = większa dokładność):
-        double smallDt = dt / TIME_SCALE / 10.0; // 10x mniejszy krok
+        double smallDt = dt / timeScale / 10.0; // 10x mniejszy krok
         for (int j = 0; j < 10; j++) {
             this.update(smallDt);
         }
@@ -152,7 +165,7 @@ public class PhysicsEngine {
         // Simulate forward and record positions
         for (int i = 0; i < numPoints; i++) {
             orbitPositions.add(new Vector3f(body.getPosition()));
-            this.update(dt / TIME_SCALE); // Use smaller timestep for accuracy
+            this.update(dt / timeScale); // Use smaller timestep for accuracy
         }
 
         // Restore original state
@@ -224,5 +237,45 @@ public class PhysicsEngine {
         }
 
         return orbitPositions;
+    }
+
+    /** Get the current time scale multiplier. */
+    public double getTimeScale() {
+        return timeScale;
+    }
+
+    /** Set the time scale multiplier, clamped to [MIN_TIME_SCALE, MAX_TIME_SCALE]. */
+    public void setTimeScale(double scale) {
+        timeScale = Math.max(MIN_TIME_SCALE, Math.min(MAX_TIME_SCALE, scale));
+    }
+
+    /** Multiply the time scale by a factor, clamped to limits. */
+    public void multiplyTimeScale(double factor) {
+        setTimeScale(timeScale * factor);
+    }
+
+    /** Get the minimum allowed time scale. */
+    public double getMinTimeScale() {
+        return MIN_TIME_SCALE;
+    }
+
+    /** Get the maximum allowed time scale. */
+    public double getMaxTimeScale() {
+        return MAX_TIME_SCALE;
+    }
+
+    /** Get the default time scale. */
+    public double getDefaultTimeScale() {
+        return DEFAULT_TIME_SCALE;
+    }
+
+    /** Get the current age of the universe in years (accumulated simulated time). */
+    public double getUniverseAgeYears() {
+        return universeAgeSeconds / SECONDS_PER_YEAR;
+    }
+
+    /** Reset the universe age back to its initial value. */
+    public void resetUniverseAge() {
+        universeAgeSeconds = INITIAL_UNIVERSE_AGE_YEARS * SECONDS_PER_YEAR;
     }
 }

@@ -1,5 +1,6 @@
 package com.physics3d.graphics;
 
+import com.physics3d.engine.PhysicsEngine;
 import com.physics3d.model.CelestialBody;
 import org.joml.Matrix4f;
 import org.joml.Vector3f;
@@ -51,6 +52,10 @@ public class Renderer {
     private int selectedIndex = -1; // -1 = no selection; otherwise index into the body list
     private boolean tabPressed = false; // edge-detect for Tab key
 
+    // ---- Time speed control ----
+    private PhysicsEngine physicsEngine;
+    private boolean sliderDragging = false; // true when user is dragging the slider handle
+
     // ---- Orbit camera state ----
     private float camDistance = 800.0f;     // distance from target, in scene units
     private float camAzimuth = 0.0f;        // radians, rotation around Y
@@ -75,6 +80,11 @@ public class Renderer {
         initGLFW();
         createWindow(title);
         initOpenGL();
+    }
+
+    /** Set the physics engine reference for time speed control. */
+    public void setPhysicsEngine(PhysicsEngine engine) {
+        this.physicsEngine = engine;
     }
 
     private void initGLFW() {
@@ -108,6 +118,28 @@ public class Renderer {
             if (key == GLFW.GLFW_KEY_TAB && action == GLFW.GLFW_PRESS) {
                 tabPressed = true;
             }
+
+            // Time speed controls: UP arrow = faster, DOWN arrow = slower
+            if (physicsEngine != null) {
+                if (key == GLFW.GLFW_KEY_UP && (action == GLFW.GLFW_PRESS || action == GLFW.GLFW_REPEAT)) {
+                    physicsEngine.multiplyTimeScale(1.5);
+                }
+                if (key == GLFW.GLFW_KEY_DOWN && (action == GLFW.GLFW_PRESS || action == GLFW.GLFW_REPEAT)) {
+                    physicsEngine.multiplyTimeScale(1.0 / 1.5);
+                }
+                // R key: reset time scale to default
+                if (key == GLFW.GLFW_KEY_R && action == GLFW.GLFW_RELEASE) {
+                    physicsEngine.setTimeScale(physicsEngine.getDefaultTimeScale());
+                }
+                // Space: pause/resume
+                if (key == GLFW.GLFW_KEY_SPACE && action == GLFW.GLFW_RELEASE) {
+                    if (physicsEngine.getTimeScale() > 0) {
+                        physicsEngine.setTimeScale(0);
+                    } else {
+                        physicsEngine.setTimeScale(physicsEngine.getDefaultTimeScale());
+                    }
+                }
+            }
         });
 
 
@@ -120,25 +152,35 @@ public class Renderer {
             this.height = Math.max(1, fbHeight);
         });
 
-        // Mouse button: start/stop dragging to rotate the camera
+        // Mouse button: start/stop dragging to rotate the camera, or slider
         GLFW.glfwSetMouseButtonCallback(window, (w, button, action, mods) -> {
             if (button == GLFW.GLFW_MOUSE_BUTTON_LEFT) {
                 if (action == GLFW.GLFW_PRESS) {
-                    dragging = true;
                     double[] mx = new double[1];
                     double[] my = new double[1];
                     GLFW.glfwGetCursorPos(window, mx, my);
-                    lastMouseX = mx[0];
-                    lastMouseY = my[0];
+
+                    // Check if click is on the slider area first
+                    if (isClickOnSlider(mx[0], my[0])) {
+                        sliderDragging = true;
+                        updateTimeScaleFromMouse(mx[0]);
+                    } else {
+                        dragging = true;
+                        lastMouseX = mx[0];
+                        lastMouseY = my[0];
+                    }
                 } else if (action == GLFW.GLFW_RELEASE) {
                     dragging = false;
+                    sliderDragging = false;
                 }
             }
         });
 
-        // Cursor movement: rotate camera while dragging
+        // Cursor movement: rotate camera while dragging, or update slider
         GLFW.glfwSetCursorPosCallback(window, (w, xpos, ypos) -> {
-            if (dragging) {
+            if (sliderDragging) {
+                updateTimeScaleFromMouse(xpos);
+            } else if (dragging) {
                 double dx = xpos - lastMouseX;
                 double dy = ypos - lastMouseY;
                 lastMouseX = xpos;
@@ -469,7 +511,179 @@ public class Renderer {
             }
         }
 
+        // --- Bottom-left: universe age ---
+        if (physicsEngine != null) {
+            double ageYears = physicsEngine.getUniverseAgeYears();
+            String ageText = "Wiek wszechświata: " + formatWithSpaces((long) ageYears) + " lat";
+            tr.drawStringWithBackground(ageText, left, 10, titleColor, bgColor, padding);
+        }
+
+        // --- Bottom: time speed slider ---
+        if (physicsEngine != null) {
+            renderTimeSlider(tr);
+        }
+
         tr.endFrame();
+    }
+
+    /**
+     * Format a long value with spaces as thousand separators (Polish convention).
+     * Example: 13823473323 -> "13 823 473 323"
+     */
+    private String formatWithSpaces(long value) {
+        StringBuilder sb = new StringBuilder();
+        String s = Long.toString(value);
+        int len = s.length();
+        for (int i = 0; i < len; i++) {
+            if (i > 0 && (len - i) % 3 == 0) {
+                sb.append(' ');
+            }
+            sb.append(s.charAt(i));
+        }
+        return sb.toString();
+    }
+
+    // ---- Time speed slider constants ----
+    private static final int SLIDER_WIDTH = 300;
+    private static final int SLIDER_HEIGHT = 14;
+    private static final int SLIDER_HANDLE_W = 12;
+    private static final int SLIDER_MARGIN_BOTTOM = 40;
+
+    /** Get the slider track X position (centered). */
+    private int sliderTrackX() {
+        return (width - SLIDER_WIDTH) / 2;
+    }
+
+    /** Get the slider track Y position (from bottom). */
+    private int sliderTrackY() {
+        return SLIDER_MARGIN_BOTTOM;
+    }
+
+    /** Convert a time scale value to a 0..1 position on the slider (logarithmic). */
+    private double timeScaleToSliderPos(double scale) {
+        if (physicsEngine == null) return 0;
+        double minLog = Math.log10(physicsEngine.getMinTimeScale() + 1); // +1 to avoid log(0)
+        double maxLog = Math.log10(physicsEngine.getMaxTimeScale());
+        double valLog = Math.log10(Math.max(scale, 1)); // clamp to avoid log(<1)
+        return (valLog - minLog) / (maxLog - minLog);
+    }
+
+    /** Convert a 0..1 slider position to a time scale value (logarithmic). */
+    private double sliderPosToTimeScale(double pos) {
+        if (physicsEngine == null) return 0;
+        double minLog = Math.log10(physicsEngine.getMinTimeScale() + 1);
+        double maxLog = Math.log10(physicsEngine.getMaxTimeScale());
+        double valLog = minLog + pos * (maxLog - minLog);
+        return Math.pow(10, valLog);
+    }
+
+    /** Check if a mouse click (screen coords) falls on the slider track or handle. */
+    private boolean isClickOnSlider(double mouseX, double mouseY) {
+        if (physicsEngine == null) return false;
+        int sx = sliderTrackX();
+        int sy = sliderTrackY();
+        // GLFW y is from top, but our HUD uses y from bottom via ortho projection.
+        // Convert: screenY (from top) → y-from-bottom = height - mouseY
+        double myFromBottom = height - mouseY;
+        return mouseX >= sx - SLIDER_HANDLE_W && mouseX <= sx + SLIDER_WIDTH + SLIDER_HANDLE_W
+                && myFromBottom >= sy - SLIDER_HANDLE_W && myFromBottom <= sy + SLIDER_HEIGHT + SLIDER_HANDLE_W;
+    }
+
+    /** Update the time scale based on mouse X position (while dragging slider). */
+    private void updateTimeScaleFromMouse(double mouseX) {
+        if (physicsEngine == null) return;
+        int sx = sliderTrackX();
+        double pos = (mouseX - sx) / SLIDER_WIDTH;
+        pos = Math.max(0, Math.min(1, pos));
+        double newScale = sliderPosToTimeScale(pos);
+        // Snap to 0 if very close to the left edge
+        if (pos < 0.02) newScale = 0;
+        physicsEngine.setTimeScale(newScale);
+    }
+
+    /** Render the time speed slider at the bottom of the screen. */
+    private void renderTimeSlider(TextRenderer tr) {
+        double scale = physicsEngine.getTimeScale();
+        double pos = timeScaleToSliderPos(scale);
+
+        int sx = sliderTrackX();
+        int sy = sliderTrackY();
+        int padding = 6;
+        int lineHeight = tr.getCharHeight() + 2;
+
+        // Format the speed label
+        String speedLabel;
+        if (scale == 0) {
+            speedLabel = "PAUSED";
+        } else if (scale < 1e3) {
+            speedLabel = String.format("%.0fx", scale);
+        } else if (scale < 1e6) {
+            speedLabel = String.format("%.0fkx", scale / 1e3);
+        } else if (scale < 1e9) {
+            speedLabel = String.format("%.1fMx", scale / 1e6);
+        } else {
+            speedLabel = String.format("%.1fGx", scale / 1e9);
+        }
+
+        float[] labelColor = {1.0f, 1.0f, 1.0f, 1.0f};
+        float[] hintColor  = {0.6f, 0.6f, 0.6f, 1.0f};
+        float[] bgColor    = {0.0f, 0.0f, 0.0f, 0.6f};
+
+        // Label above slider
+        String labelLine = "Time Speed: " + speedLabel;
+        tr.drawStringWithBackground(labelLine, sx, sy + SLIDER_HEIGHT + 4, labelColor, bgColor, padding);
+
+        // Hint below slider
+        tr.drawStringWithBackground("UP/DOWN: adjust | SPACE: pause | R: reset", sx, sy - lineHeight - 2, hintColor, bgColor, padding);
+
+        // Draw slider track (background)
+        tr.beginFrame(width, height); // already in a frame, but we draw with GL directly
+        // We need to draw the slider using raw GL since TextRenderer only does text.
+        // Switch to 2D ortho for slider drawing (already set up by beginFrame).
+        // Actually, we're already in the beginFrame/endFrame block, so ortho is set.
+        // We need to draw GL primitives here. Let's draw them.
+
+        // Draw track background
+        GL11.glDisable(GL11.GL_TEXTURE_2D);
+        GL11.glColor4f(0.2f, 0.2f, 0.2f, 0.8f);
+        GL11.glBegin(GL11.GL_QUADS);
+        GL11.glVertex2f(sx, sy);
+        GL11.glVertex2f(sx + SLIDER_WIDTH, sy);
+        GL11.glVertex2f(sx + SLIDER_WIDTH, sy + SLIDER_HEIGHT);
+        GL11.glVertex2f(sx, sy + SLIDER_HEIGHT);
+        GL11.glEnd();
+
+        // Draw filled portion (from left to current position)
+        float fillX = (float) (sx + pos * SLIDER_WIDTH);
+        GL11.glColor4f(0.2f, 0.6f, 1.0f, 0.9f);
+        GL11.glBegin(GL11.GL_QUADS);
+        GL11.glVertex2f(sx, sy);
+        GL11.glVertex2f(fillX, sy);
+        GL11.glVertex2f(fillX, sy + SLIDER_HEIGHT);
+        GL11.glVertex2f(sx, sy + SLIDER_HEIGHT);
+        GL11.glEnd();
+
+        // Draw handle
+        float handleX = fillX - SLIDER_HANDLE_W / 2f;
+        GL11.glColor4f(1.0f, 1.0f, 1.0f, 1.0f);
+        GL11.glBegin(GL11.GL_QUADS);
+        GL11.glVertex2f(handleX, sy - 2);
+        GL11.glVertex2f(handleX + SLIDER_HANDLE_W, sy - 2);
+        GL11.glVertex2f(handleX + SLIDER_HANDLE_W, sy + SLIDER_HEIGHT + 2);
+        GL11.glVertex2f(handleX, sy + SLIDER_HEIGHT + 2);
+        GL11.glEnd();
+
+        // Draw track border
+        GL11.glColor4f(0.5f, 0.5f, 0.5f, 1.0f);
+        GL11.glBegin(GL11.GL_LINE_LOOP);
+        GL11.glVertex2f(sx, sy);
+        GL11.glVertex2f(sx + SLIDER_WIDTH, sy);
+        GL11.glVertex2f(sx + SLIDER_WIDTH, sy + SLIDER_HEIGHT);
+        GL11.glVertex2f(sx, sy + SLIDER_HEIGHT);
+        GL11.glEnd();
+
+        // Re-enable texture for subsequent text rendering
+        GL11.glEnable(GL11.GL_TEXTURE_2D);
     }
 
     private float[] colorFor(String name) {
