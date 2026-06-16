@@ -10,15 +10,14 @@ import java.awt.RenderingHints;
 import java.awt.image.BufferedImage;
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
-import java.nio.IntBuffer;
 
 /**
- * Bitmap font renderer for LWJGL using AWT fonts and OpenGL display lists.
+ * Texture-based text renderer for LWJGL using AWT fonts.
  *
- * <p>Each ASCII character (32..127) is rasterised once into a small RGBA texture
- * and bound to a display list that calls {@code glDrawPixels} / {@code glBitmap}
- * to render glyphs. This is the classic fixed-function pipeline approach and
- * works well for HUD overlays because it does not require shaders.</p>
+ * <p>Each ASCII character (32..127) is rasterised once into a single OpenGL
+ * texture atlas. Glyphs are drawn as textured quads in screen space. This
+ * approach is robust across drivers and avoids the pitfalls of the legacy
+ * {@code glBitmap} path (raster-position clipping, 1-bit packing, etc.).</p>
  *
  * <p>Usage:</p>
  * <pre>
@@ -41,8 +40,11 @@ public class TextRenderer {
     /** Per-character horizontal advance (pixels). */
     private final int[] charWidths = new int[CHAR_COUNT];
 
-    /** OpenGL display list base id for the glyphs. */
-    private int listBase;
+    /** OpenGL texture id for the glyph atlas. */
+    private int textureId;
+
+    /** UV coordinates for each glyph in the atlas (u0, v0, u1, v1). */
+    private final float[][] uvs = new float[CHAR_COUNT][4];
 
     private final Font font;
 
@@ -62,17 +64,14 @@ public class TextRenderer {
         }
         g.dispose();
 
-        buildDisplayLists();
+        buildTexture();
     }
 
     /**
-     * Rasterise every supported glyph into an OpenGL display list.
-     * Each list issues a {@code glBitmap} call that draws the glyph at the
-     * current raster position and advances the cursor.
+     * Rasterise every supported glyph into a single RGBA texture atlas.
+     * Each glyph occupies a {@code charWidth x charHeight} cell.
      */
-    private void buildDisplayLists() {
-        // Render every glyph into one wide image, then upload as a single
-        // bitmap. We use glBitmap (not textures) so no shaders are needed.
+    private void buildTexture() {
         int atlasWidth = charWidth * CHAR_COUNT;
         int atlasHeight = charHeight;
 
@@ -81,103 +80,77 @@ public class TextRenderer {
         g.setRenderingHint(RenderingHints.KEY_TEXT_ANTIALIASING, RenderingHints.VALUE_TEXT_ANTIALIAS_ON);
         g.setRenderingHint(RenderingHints.KEY_FRACTIONALMETRICS, RenderingHints.VALUE_FRACTIONALMETRICS_ON);
         g.setFont(font);
-        g.setColor(Color.WHITE);
         g.setBackground(new Color(0, 0, 0, 0));
         g.clearRect(0, 0, atlasWidth, atlasHeight);
         g.setColor(Color.WHITE);
-        g.drawString(new String(toCharArray(FIRST_CHAR, LAST_CHAR)), 0, font.getSize());
 
-        // Convert to a packed RGBA byte buffer (top-left origin in AWT -> bottom-left in GL).
+        // Draw each glyph individually at its cell origin so the rasterised
+        // position matches the UV mapping (i * charWidth). Drawing them all
+        // in one drawString() call would use each glyph's actual advance,
+        // which is narrower than charWidth for most characters and would
+        // cause the wrong glyphs to be sampled at runtime.
+        int baseline = fmBaseline(font);
+        for (int i = 0; i < CHAR_COUNT; i++) {
+            char c = (char) (FIRST_CHAR + i);
+            int cellX = i * charWidth;
+            g.drawString(String.valueOf(c), cellX, baseline);
+        }
+        g.dispose();
+
+        // Convert ARGB to RGBA byte buffer (AWT top-left -> GL bottom-left).
         byte[] pixels = new byte[atlasWidth * atlasHeight * 4];
         int[] argb = atlas.getRGB(0, 0, atlasWidth, atlasHeight, null, 0, atlasWidth);
-        for (int i = 0; i < argb.length; i++) {
-            int c = argb[i];
-            int j = i * 4;
-            pixels[j + 0] = (byte) ((c >> 16) & 0xFF); // R
-            pixels[j + 1] = (byte) ((c >> 8) & 0xFF);  // G
-            pixels[j + 2] = (byte) (c & 0xFF);         // B
-            pixels[j + 3] = (byte) ((c >> 24) & 0xFF); // A
+        for (int y = 0; y < atlasHeight; y++) {
+            int srcRow = (atlasHeight - 1 - y) * atlasWidth;
+            int dstRow = y * atlasWidth;
+            for (int x = 0; x < atlasWidth; x++) {
+                int c = argb[srcRow + x];
+                int j = (dstRow + x) * 4;
+                pixels[j + 0] = (byte) ((c >> 16) & 0xFF); // R
+                pixels[j + 1] = (byte) ((c >> 8) & 0xFF);  // G
+                pixels[j + 2] = (byte) (c & 0xFF);         // B
+                pixels[j + 3] = (byte) ((c >> 24) & 0xFF); // A
+            }
         }
 
         ByteBuffer pixelBuffer = ByteBuffer.allocateDirect(pixels.length).order(ByteOrder.nativeOrder());
         pixelBuffer.put(pixels).flip();
 
-        // Allocate display lists, one per character.
-        listBase = GL11.glGenLists(CHAR_COUNT);
+        // Upload as a single 2D texture.
+        textureId = GL11.glGenTextures();
+        GL11.glBindTexture(GL11.GL_TEXTURE_2D, textureId);
+        GL11.glTexParameteri(GL11.GL_TEXTURE_2D, GL11.GL_TEXTURE_MIN_FILTER, GL11.GL_LINEAR);
+        GL11.glTexParameteri(GL11.GL_TEXTURE_2D, GL11.GL_TEXTURE_MAG_FILTER, GL11.GL_LINEAR);
+        GL11.glTexParameteri(GL11.GL_TEXTURE_2D, GL11.GL_TEXTURE_WRAP_S, GL11.GL_CLAMP);
+        GL11.glTexParameteri(GL11.GL_TEXTURE_2D, GL11.GL_TEXTURE_WRAP_T, GL11.GL_CLAMP);
+        GL11.glTexImage2D(GL11.GL_TEXTURE_2D, 0, GL11.GL_RGBA,
+                atlasWidth, atlasHeight, 0,
+                GL11.GL_RGBA, GL11.GL_UNSIGNED_BYTE, pixelBuffer);
+        GL11.glBindTexture(GL11.GL_TEXTURE_2D, 0);
+
+        // Compute UVs for each glyph.
+        float invW = 1.0f / atlasWidth;
+        float invH = 1.0f / atlasHeight;
         for (int i = 0; i < CHAR_COUNT; i++) {
-            GL11.glNewList(listBase + i, GL11.GL_COMPILE);
-            GL11.glBitmap(charWidth, charHeight,
-                    0.0f, 0.0f,
-                    charWidths[i], 0.0f,
-                    extractGlyphRow(pixelBuffer, atlasWidth, atlasHeight, i));
-            GL11.glEndList();
+            float u0 = i * charWidth * invW;
+            float u1 = (i + 1) * charWidth * invW;
+            float v0 = 0.0f;
+            float v1 = 1.0f;
+            uvs[i][0] = u0;
+            uvs[i][1] = v0;
+            uvs[i][2] = u1;
+            uvs[i][3] = v1;
         }
+    }
 
+    /** Compute the baseline Y for drawing text in the atlas. */
+    private static int fmBaseline(Font font) {
+        BufferedImage tmp = new BufferedImage(1, 1, BufferedImage.TYPE_INT_ARGB);
+        Graphics2D g = tmp.createGraphics();
+        g.setFont(font);
+        int baseline = g.getFontMetrics().getAscent();
         g.dispose();
-    }
-
-    /** Build a char[] containing every supported glyph for atlas rasterisation. */
-    private static char[] toCharArray(int first, int last) {
-        char[] chars = new char[last - first + 1];
-        for (int i = 0; i < chars.length; i++) {
-            chars[i] = (char) (first + i);
-        }
-        return chars;
-    }
-
-    /**
-     * Extract a single glyph row from the atlas as a packed GL bitmap.
-     * The bitmap is stored bottom-up, so we flip the Y axis.
-     */
-    private ByteBuffer extractGlyphRow(ByteBuffer atlas, int atlasWidth, int atlasHeight, int charIndex) {
-        int glyphWidth = charWidth;
-        int glyphHeight = charHeight;
-        int srcX = charIndex * charWidth;
-
-        // GL_BITMAP expects rows padded to multiples of 8 bits (1 byte).
-        int paddedWidth = (glyphWidth + 7) & ~7;
-        byte[] data = new byte[paddedWidth * glyphHeight];
-
-        int[] src = new int[glyphWidth * glyphHeight];
-        // We re-read from the atlas's underlying image; simpler: re-rasterise
-        // the single glyph into its own image and convert.
-        BufferedImage glyphImg = newBufferedImage(glyphWidth, glyphHeight);
-        Graphics2D gg = glyphImg.createGraphics();
-        gg.setRenderingHint(RenderingHints.KEY_TEXT_ANTIALIASING, RenderingHints.VALUE_TEXT_ANTIALIAS_ON);
-        gg.setRenderingHint(RenderingHints.KEY_FRACTIONALMETRICS, RenderingHints.VALUE_FRACTIONALMETRICS_ON);
-        gg.setFont(font);
-        gg.setColor(Color.WHITE);
-        gg.clearRect(0, 0, glyphWidth, glyphHeight);
-        gg.drawString(String.valueOf((char) (FIRST_CHAR + charIndex)), 0, font.getSize());
-        gg.dispose();
-
-        int[] argb = glyphImg.getRGB(0, 0, glyphWidth, glyphHeight, null, 0, glyphWidth);
-        // Convert alpha to 8-bit grayscale, then pack into the GL bitmap.
-        // GL_BITMAP interprets each byte as 8 pixels (1 bit each).
-        for (int y = 0; y < glyphHeight; y++) {
-            int srcRow = (glyphHeight - 1 - y); // flip Y
-            for (int x = 0; x < paddedWidth; x++) {
-                int bit = 0;
-                if (x < glyphWidth) {
-                    int a = (argb[srcRow * glyphWidth + x] >>> 24) & 0xFF;
-                    bit = a > 64 ? 1 : 0;
-                }
-                if ((x & 7) == 0) {
-                    data[y * paddedWidth + (x >> 3)] = 0;
-                }
-                if (bit != 0) {
-                    data[y * paddedWidth + (x >> 3)] |= (byte) (1 << (7 - (x & 7)));
-                }
-            }
-        }
-
-        ByteBuffer buf = ByteBuffer.allocateDirect(data.length).order(ByteOrder.nativeOrder());
-        buf.put(data).flip();
-        return buf;
-    }
-
-    private static BufferedImage newBufferedImage(int w, int h) {
-        return new BufferedImage(w, h, BufferedImage.TYPE_INT_ARGB);
+        return baseline;
     }
 
     /**
@@ -194,11 +167,11 @@ public class TextRenderer {
         GL11.glPushMatrix();
         GL11.glLoadIdentity();
 
-        GL11.glPushAttrib(GL11.GL_ENABLE_BIT | GL11.GL_COLOR_BUFFER_BIT | GL11.GL_PIXEL_MODE_BIT);
+        GL11.glPushAttrib(GL11.GL_ENABLE_BIT | GL11.GL_COLOR_BUFFER_BIT);
         GL11.glDisable(GL11.GL_DEPTH_TEST);
         GL11.glEnable(GL11.GL_BLEND);
         GL11.glBlendFunc(GL11.GL_SRC_ALPHA, GL11.GL_ONE_MINUS_SRC_ALPHA);
-        GL11.glPixelStorei(GL11.GL_UNPACK_ALIGNMENT, 1);
+        GL11.glEnable(GL11.GL_TEXTURE_2D);
     }
 
     /** Restore the 3D projection / modelview after HUD rendering. */
@@ -223,18 +196,26 @@ public class TextRenderer {
         if (text == null || text.isEmpty()) return;
 
         GL11.glColor4f(rgba[0], rgba[1], rgba[2], rgba.length > 3 ? rgba[3] : 1.0f);
+        GL11.glBindTexture(GL11.GL_TEXTURE_2D, textureId);
 
-        // glBitmap uses the current raster position; set it in pixels.
-        GL11.glRasterPos2i(x, y);
-
-        // Issue one display list call per character.
-        GL11.glPushAttrib(GL11.GL_CURRENT_BIT);
+        int cursorX = x;
         for (int i = 0; i < text.length(); i++) {
             int c = text.charAt(i);
             if (c < FIRST_CHAR || c > LAST_CHAR) continue;
-            GL11.glCallList(listBase + (c - FIRST_CHAR));
+            int idx = c - FIRST_CHAR;
+            float[] uv = uvs[idx];
+
+            GL11.glBegin(GL11.GL_QUADS);
+            GL11.glTexCoord2f(uv[0], uv[1]); GL11.glVertex2i(cursorX, y);
+            GL11.glTexCoord2f(uv[2], uv[1]); GL11.glVertex2i(cursorX + charWidth, y);
+            GL11.glTexCoord2f(uv[2], uv[3]); GL11.glVertex2i(cursorX + charWidth, y + charHeight);
+            GL11.glTexCoord2f(uv[0], uv[3]); GL11.glVertex2i(cursorX, y + charHeight);
+            GL11.glEnd();
+
+            cursorX += charWidths[idx];
         }
-        GL11.glPopAttrib();
+
+        GL11.glBindTexture(GL11.GL_TEXTURE_2D, 0);
     }
 
     /** Convenience: draw a string with a solid background panel behind it. */
@@ -242,7 +223,8 @@ public class TextRenderer {
         int textWidth = stringWidth(text);
         int textHeight = charHeight;
 
-        // Background panel
+        // Background panel (drawn without texturing).
+        GL11.glDisable(GL11.GL_TEXTURE_2D);
         GL11.glColor4f(bgColor[0], bgColor[1], bgColor[2], bgColor.length > 3 ? bgColor[3] : 0.6f);
         GL11.glBegin(GL11.GL_QUADS);
         GL11.glVertex2i(x - padding, y - padding);
@@ -250,6 +232,7 @@ public class TextRenderer {
         GL11.glVertex2i(x + textWidth + padding, y + textHeight + padding);
         GL11.glVertex2i(x - padding, y + textHeight + padding);
         GL11.glEnd();
+        GL11.glEnable(GL11.GL_TEXTURE_2D);
 
         drawString(text, x, y, textColor);
     }
@@ -269,11 +252,11 @@ public class TextRenderer {
         return charHeight;
     }
 
-    /** Free the display lists. Call before destroying the GL context. */
+    /** Free the texture. Call before destroying the GL context. */
     public void dispose() {
-        if (listBase != 0) {
-            GL11.glDeleteLists(listBase, CHAR_COUNT);
-            listBase = 0;
+        if (textureId != 0) {
+            GL11.glDeleteTextures(textureId);
+            textureId = 0;
         }
     }
 }
