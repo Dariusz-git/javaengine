@@ -9,13 +9,13 @@ import org.lwjgl.glfw.GLFWErrorCallback;
 import org.lwjgl.opengl.GL;
 import org.lwjgl.opengl.GL11;
 
+import java.awt.Font;
 import java.nio.FloatBuffer;
 import java.util.List;
 import java.util.Queue;
 
 /**
  * Handles rendering of the 3D scene using OpenGL (fixed-function GL11).
- *
  * Features an orbital camera:
  *   - Left mouse drag: rotate around the look-at target (azimuth / elevation)
  *   - Scroll wheel:    zoom in / out (camera distance)
@@ -45,6 +45,11 @@ public class Renderer {
     private static final int SPHERE_SLICES = 24;
 
     private boolean showTrails = true; // Toggle with T key
+
+    // ---- HUD / planet selection ----
+    private TextRenderer textRenderer;
+    private int selectedIndex = -1; // -1 = no selection; otherwise index into the body list
+    private boolean tabPressed = false; // edge-detect for Tab key
 
     // ---- Orbit camera state ----
     private float camDistance = 800.0f;     // distance from target, in scene units
@@ -97,6 +102,11 @@ public class Renderer {
 
             if (key == GLFW.GLFW_KEY_T && action == GLFW.GLFW_RELEASE) {
                 showTrails = !showTrails;
+            }
+
+            // Tab cycles through celestial bodies for the HUD.
+            if (key == GLFW.GLFW_KEY_TAB && action == GLFW.GLFW_PRESS) {
+                tabPressed = true;
             }
         });
 
@@ -360,10 +370,107 @@ public class Renderer {
             GL11.glPopMatrix();
         }
 
+        // ---- HUD overlay (drawn last, on top of the 3D scene) ----
+        renderHud(bodies);
+
         GLFW.glfwSwapBuffers(window);
         GLFW.glfwPollEvents();
     }
 
+
+    /**
+     * Lazy-initialise the bitmap font renderer. Done lazily because we need
+     * a current GL context, which only exists after the window is created.
+     */
+    private TextRenderer getTextRenderer() {
+        if (textRenderer == null) {
+            textRenderer = new TextRenderer(new Font("SansSerif", Font.PLAIN, 16));
+        }
+        return textRenderer;
+    }
+
+    /**
+     * Draw the HUD overlay: a body list on the left, and detailed info for
+     * the currently selected body on the right.
+     */
+    private void renderHud(List<CelestialBody> bodies) {
+        TextRenderer tr = getTextRenderer();
+
+        // Handle Tab press: cycle to the next body (or wrap).
+        if (tabPressed) {
+            tabPressed = false;
+            if (bodies.isEmpty()) {
+                selectedIndex = -1;
+            } else {
+                selectedIndex = (selectedIndex + 1) % bodies.size();
+            }
+        }
+
+        tr.beginFrame(width, height);
+
+        // --- Top-left: title + controls hint ---
+        float[] titleColor = {1.0f, 1.0f, 1.0f, 1.0f};
+        float[] hintColor  = {0.7f, 0.7f, 0.7f, 1.0f};
+        float[] bgColor    = {0.0f, 0.0f, 0.0f, 0.55f};
+
+        int padding = 6;
+        int lineHeight = tr.getCharHeight() + 2;
+        int left = 10;
+        int top = height - 10;
+
+        tr.drawStringWithBackground("Solar System Simulator", left, top - lineHeight, titleColor, bgColor, padding);
+        tr.drawStringWithBackground("TAB: select body", left, top - 2 * lineHeight, hintColor, bgColor, padding);
+        tr.drawStringWithBackground("T: toggle trails", left, top - 3 * lineHeight, hintColor, bgColor, padding);
+        tr.drawStringWithBackground("WASD: pan, drag: rotate, scroll: zoom", left, top - 4 * lineHeight, hintColor, bgColor, padding);
+
+        // --- Left side: body list ---
+        int listTop = top - 5 * lineHeight - 10;
+        tr.drawStringWithBackground("Bodies:", left, listTop - lineHeight, titleColor, bgColor, padding);
+        for (int i = 0; i < bodies.size(); i++) {
+            CelestialBody body = bodies.get(i);
+            String marker = (i == selectedIndex) ? "> " : "  ";
+            String label = marker + body.getName();
+            float[] color = (i == selectedIndex)
+                    ? new float[]{1.0f, 1.0f, 0.3f, 1.0f}
+                    : new float[]{0.9f, 0.9f, 0.9f, 1.0f};
+            tr.drawStringWithBackground(label, left, listTop - (i + 2) * lineHeight, color, bgColor, padding);
+        }
+
+        // --- Right side: selected body details ---
+        if (selectedIndex >= 0 && selectedIndex < bodies.size()) {
+            CelestialBody body = bodies.get(selectedIndex);
+            float speed = body.getVelocity().length();
+            float mass = body.getMass();
+            float radius = body.getRadius();
+            double distanceFromSun = 0.0;
+            for (CelestialBody other : bodies) {
+                if ("Sun".equals(other.getName())) {
+                    distanceFromSun = body.getPosition().distance(other.getPosition());
+                    break;
+                }
+            }
+
+            String[] lines = {
+                    "Selected: " + body.getName(),
+                    String.format("Velocity: %.3e m/s", speed),
+                    String.format("Mass:     %.3e kg", mass),
+                    String.format("Radius:   %.3e m", radius),
+                    String.format("Dist Sun: %.3e m", distanceFromSun),
+                    String.format("Eccentr.: %.4f", body.getEccentricity()),
+                    String.format("SemiMaj.: %.3e m", body.getSemiMajorAxis())
+            };
+
+            int panelWidth = 320;
+            int right = width - panelWidth - 10;
+            int panelTop = top;
+            for (int i = 0; i < lines.length; i++) {
+                float[] color = (i == 0) ? titleColor : new float[]{0.95f, 0.95f, 0.95f, 1.0f};
+                tr.drawStringWithBackground(lines[i], right, panelTop - (i + 1) * lineHeight, color, bgColor, padding);
+            }
+        }
+
+        tr.endFrame();
+    }
 
     private float[] colorFor(String name) {
         switch (name) {
@@ -409,6 +516,10 @@ public class Renderer {
     }
 
     public void cleanup() {
+        if (textRenderer != null) {
+            textRenderer.dispose();
+            textRenderer = null;
+        }
         GLFW.glfwDestroyWindow(window);
         GLFW.glfwTerminate();
     }

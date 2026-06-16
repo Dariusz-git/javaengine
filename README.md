@@ -73,7 +73,7 @@ Where:
 - [ ] Add more celestial bodies (Venus, Jupiter, Saturn, etc.)
 - [ ] Implement collision detection
 - [ ] Add camera controls for better visualization
-- [ ] Implement orbital trails
+- [x] Implement orbital trails
 - [ ] Add time acceleration/deceleration controls
 - [ ] Improve rendering with textures and lighting
 - [ ] Add configuration file support for custom scenarios
