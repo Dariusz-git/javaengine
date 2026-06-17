@@ -14,6 +14,7 @@ public class CelestialBody {
     private Vector3f velocity;
     private float mass;        // in kg
     private float radius;      // in meters
+    private BodyType bodyType; // classification (star, terrestrial, gas/ice giant)
 
     private double semiMajorAxis;      // a
     private double eccentricity;       // e
@@ -36,7 +37,8 @@ public class CelestialBody {
                          float mass, float radius,
                          double semiMajorAxis, double eccentricity,
                          double inclination, double ascendingNode,
-                         double argOfPericenter, double meanAnomaly) {
+                         double argOfPericenter, double meanAnomaly,
+                         BodyType bodyType) {
         this.name = name;
         this.position = new Vector3f(position);
         this.velocity = new Vector3f(velocity);
@@ -48,6 +50,7 @@ public class CelestialBody {
         this.ascendingNode = ascendingNode;
         this.argOfPericenter = argOfPericenter;
         this.meanAnomaly = meanAnomaly;
+        this.bodyType = bodyType;
     }
 
     // Getters and setters
@@ -84,6 +87,8 @@ public class CelestialBody {
     public double getAscendingNode() { return ascendingNode; }
     public double getArgOfPericenter() { return argOfPericenter; }
     public double getMeanAnomaly() { return meanAnomaly; }
+
+    public BodyType getBodyType() { return bodyType; }
 
     public void setOrbitalParameters(double a, double e, double i,
                                      double ascNode, double argPeri, double meanAnom) {

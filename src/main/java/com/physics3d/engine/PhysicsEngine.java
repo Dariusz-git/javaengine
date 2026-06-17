@@ -1,6 +1,7 @@
 package com.physics3d.engine;
 
 import com.physics3d.model.CelestialBody;
+import org.joml.Matrix3f;
 import org.joml.Vector3f;
 
 import java.util.ArrayList;
@@ -177,6 +178,95 @@ public class PhysicsEngine {
 
 
     /**
+     * Compute the initial position and velocity of a body so that it lies exactly
+     * on its Keplerian orbit defined by the orbital elements (a, e, i, Ω, ω, M).
+     *
+     * Position is evaluated at the true anomaly θ = M (mean anomaly), which is
+     * exact when M = 0 (body starts at pericenter). For non-zero M the same
+     * formula still gives a point on the orbit, just at a different phase.
+     *
+     * Velocity magnitude comes from the vis-viva equation at the body's current
+     * radius: v = sqrt(GM · (2/r − 1/a)). The velocity is perpendicular to the
+     * position vector in the orbital plane and points in the direction of motion.
+     *
+     * @param body    Body whose position/velocity should be set
+     * @param sunMass Mass of the central body (kg)
+     */
+    public void computeOrbitalState(CelestialBody body, double sunMass) {
+        double a = body.getSemiMajorAxis();
+        double e = body.getEccentricity();
+        double i = body.getInclination();
+        double ascNode = body.getAscendingNode();
+        double argPeri = body.getArgOfPericenter();
+        double meanAnom = body.getMeanAnomaly();
+
+        if (a < 1e6) {
+            // Sun or invalid orbit — leave at origin
+            body.setPosition(new Vector3f(0, 0, 0));
+            body.setVelocity(new Vector3f(0, 0, 0));
+            return;
+        }
+
+        // True anomaly θ equals mean anomaly M only for circular orbits (e = 0).
+        // For elliptical orbits we solve Kepler's equation M = E − e·sin(E).
+        double theta;
+        if (e < 1e-9) {
+            theta = meanAnom;
+        } else {
+            double E = meanAnom;
+            // Newton-Raphson iteration (5 iterations is plenty for any planetary e)
+            for (int k = 0; k < 5; k++) {
+                double dE = (E - e * Math.sin(E) - meanAnom) / (1.0 - e * Math.cos(E));
+                E -= dE;
+            }
+            theta = 2.0 * Math.atan2(Math.sqrt(1 + e) * Math.sin(E / 2.0),
+                                     Math.sqrt(1 - e) * Math.cos(E / 2.0));
+        }
+
+        // Radius at this true anomaly
+        double r = (a * (1 - e * e)) / (1 + e * Math.cos(theta));
+
+        // Position in the orbital plane (XZ plane, Y = 0)
+        double x_orb = r * Math.cos(theta);
+        double z_orb = r * Math.sin(theta);
+
+        // Velocity in the orbital plane — derived from the specific angular
+        // momentum h = sqrt(GM · a · (1 − e²)). The radial and tangential
+        // components of velocity are:
+        //   v_r = (GM/h) · e · sin θ
+        //   v_θ = (GM/h) · (1 + e · cos θ)
+        // In Cartesian form (with θ measured from pericenter, in the XZ plane):
+        //   v_x = v_r·cos θ − v_θ·sin θ = −(GM/h) · sin θ
+        //   v_z = v_r·sin θ + v_θ·cos θ =  (GM/h) · (e + cos θ)
+        //
+        // This is the correct closed-form velocity. It is equivalent to the
+        // vis-viva speed applied to a UNIT direction vector, so it produces
+        // a velocity whose magnitude matches vis-viva exactly. The previous
+        // implementation multiplied vis-viva by the non-unit vector
+        // (−sin θ, e + cos θ), whose length is sqrt(1 + e² + 2e·cos θ),
+        // which over-estimates the speed (by ~9% near apocenter for Mars)
+        // and causes the dynamic orbit to drift outward.
+        double h = Math.sqrt(GRAVITATIONAL_CONSTANT * sunMass * a * (1.0 - e * e));
+        double vFactor = (GRAVITATIONAL_CONSTANT * sunMass) / h;
+        double vx_orb = -vFactor * Math.sin(theta);
+        double vz_orb =  vFactor * (e + Math.cos(theta));
+
+        // Same 3-1-3 rotation used by generateKeplerianOrbit
+        Matrix3f orbitalRotation = new Matrix3f()
+                .rotationZ((float) argPeri)
+                .rotateX((float) i)
+                .rotateZ((float) ascNode);
+
+        Vector3f pos = new Vector3f((float) x_orb, 0.0f, (float) z_orb);
+        Vector3f vel = new Vector3f((float) vx_orb, 0.0f, (float) vz_orb);
+        orbitalRotation.transform(pos);
+        orbitalRotation.transform(vel);
+
+        body.setPosition(pos);
+        body.setVelocity(vel);
+    }
+
+    /**
      * Generate perfect elliptical orbit using Kepler's equation
      * @param body Body to generate orbit for
      * @param sunPosition Position of the sun
@@ -189,49 +279,36 @@ public class PhysicsEngine {
 
         double a = body.getSemiMajorAxis();
         double e = body.getEccentricity();
-        double i = body.getInclination();        // Inclination
-        double ascNode = body.getAscendingNode(); // Ascending node
-        double argPeri = body.getArgOfPericenter(); // Arg of pericenter
-        double meanAnom = body.getMeanAnomaly();  // Mean anomaly (start position)
+        double i = body.getInclination();
+        double ascNode = body.getAscendingNode();
+        double argPeri = body.getArgOfPericenter();
+        double meanAnom = body.getMeanAnomaly();
 
         if (a < 1e6) {
             System.out.println("WARNING: " + body.getName() + " has invalid orbit");
             return orbitPositions;
         }
 
-        // Generate orbit
+        // Pre-compute the orbital rotation matrix: Rz(Ω) · Rx(i) · Rz(ω)
+        // This is the standard 3-1-3 Euler sequence used in celestial mechanics.
+        // JOML Matrix3f uses float, so we cast the double angles once here.
+        Matrix3f orbitalRotation = new Matrix3f()
+                .rotationZ((float) argPeri)   // Rz(ω): rotate by argument of pericenter
+                .rotateX((float) i)           // Rx(i): tilt by inclination
+                .rotateZ((float) ascNode);    // Rz(Ω): rotate by longitude of ascending node
+
         for (int idx = 0; idx <= numPoints; idx++) {
             double theta = meanAnom + (idx / (double) numPoints) * 2 * Math.PI;
-
-            // Kepler equation: r = a(1-e²) / (1 + e*cos(θ))
             double r_polar = (a * (1 - e * e)) / (1 + e * Math.cos(theta));
 
-            // Współrzędne w płaszczyźnie orbity (XZ plane)
-            double x_orb = r_polar * Math.cos(theta);
-            double z_orb = r_polar * Math.sin(theta);
-            double y_orb = 0;
+            // Position in the orbital plane (XZ plane, Y=0)
+            float x_orb = (float) (r_polar * Math.cos(theta));
+            float z_orb = (float) (r_polar * Math.sin(theta));
 
-            // ⭐ Rotacja o argument pericenter (ω) - wokół Y osi
-            double x_rot = x_orb * Math.cos(argPeri) - z_orb * Math.sin(argPeri);
-            double z_rot = x_orb * Math.sin(argPeri) + z_orb * Math.cos(argPeri);
-            double y_rot = y_orb;
-
-            // ⭐ Rotacja o inclination (i) - wokół X osi (pochyla XZ->XY)
-            double x_3d = x_rot;
-            double y_3d = y_rot * Math.cos(i) - z_rot * Math.sin(i);
-            double z_3d = y_rot * Math.sin(i) + z_rot * Math.cos(i);
-
-            // ⭐ Rotacja o ascending node (Ω) - wokół Y osi
-            double x_final = x_3d * Math.cos(ascNode) - z_3d * Math.sin(ascNode);
-            double z_final = x_3d * Math.sin(ascNode) + z_3d * Math.cos(ascNode);
-            double y_final = y_3d;
-
-            // Przesuń do pozycji Słońca
-            Vector3f point = new Vector3f(
-                    (float)(sunPosition.x + x_final),
-                    (float)(sunPosition.y + y_final),
-                    (float)(sunPosition.z + z_final)
-            );
+            // Apply the pre-computed 3D rotation, then offset to sun position
+            Vector3f point = new Vector3f(x_orb, 0.0f, z_orb);
+            orbitalRotation.transform(point);
+            point.add(sunPosition);
 
             orbitPositions.add(point);
         }

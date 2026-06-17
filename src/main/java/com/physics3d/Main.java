@@ -2,6 +2,7 @@ package com.physics3d;
 
 import com.physics3d.engine.PhysicsEngine;
 import com.physics3d.graphics.Renderer;
+import com.physics3d.model.BodyType;
 import com.physics3d.model.CelestialBody;
 import org.joml.Vector3f;
 
@@ -28,43 +29,161 @@ public class Main {
                 0,          // Inclination
                 0,          // AscendingNode
                 0,          // ArgOfPericenter
-                0           // MeanAnomaly
+                0,          // MeanAnomaly
+                BodyType.STAR
         );
-        
-        // Earth
+
+        // Mercury — terrestrial planet, position/velocity computed from elements
+        CelestialBody mercury = new CelestialBody(
+                "Mercury",
+                new Vector3f(0, 0, 0),  // placeholder, set by computeOrbitalState
+                new Vector3f(0, 0, 0),  // placeholder, set by computeOrbitalState
+                3.301e23f,
+                2.439e6f,
+                5.791e10,   // SemiMajorAxis
+                0.2056,     // Eccentricity
+                Math.toRadians(7.00),    // Inclination
+                Math.toRadians(48.33),   // AscendingNode
+                Math.toRadians(29.12),   // ArgOfPericenter
+                0,          // MeanAnomaly (= 0 na pericenter)
+                BodyType.TERRESTRIAL
+        );
+
+        // Venus — terrestrial planet
+        CelestialBody venus = new CelestialBody(
+                "Venus",
+                new Vector3f(0, 0, 0),  // placeholder, set by computeOrbitalState
+                new Vector3f(0, 0, 0),  // placeholder, set by computeOrbitalState
+                4.867e24f,
+                6.052e6f,
+                1.082e11,   // SemiMajorAxis
+                0.0068,     // Eccentricity
+                Math.toRadians(3.39),    // Inclination
+                Math.toRadians(76.68),   // AscendingNode
+                Math.toRadians(55.0),    // ArgOfPericenter
+                0,          // MeanAnomaly
+                BodyType.TERRESTRIAL
+        );
+
+        // Earth — position and velocity are computed from orbital elements below
         CelestialBody earth = new CelestialBody(
                 "Earth",
-                new Vector3f(1.471e11f, 0, 0),  // Pericenter: a*(1-e) = 1.496e11 * (1-0.0167)
-                new Vector3f(0, 0, 30290),      // Prędkość na pericenter (szybciej)
+                new Vector3f(0, 0, 0),  // placeholder, set by computeOrbitalState
+                new Vector3f(0, 0, 0),  // placeholder, set by computeOrbitalState
                 5.972e24f,
                 6.371e6f,
                 1.496e11,   // SemiMajorAxis
                 0.0167,     // Eccentricity
-                0,          // Inclination
-                0,          // AscendingNode
-                0,          // ArgOfPericenter
-                0           // MeanAnomaly (= 0 na pericenter)
+                Math.toRadians(0.0),     // Inclination (płaszczyzna odniesienia)
+                Math.toRadians(0.0),     // AscendingNode
+                Math.toRadians(102.9),   // ArgOfPericenter
+                0,          // MeanAnomaly (= 0 na pericenter)
+                BodyType.TERRESTRIAL
         );
-        
-        // Mars
+
+        // Mars — terrestrial planet
         CelestialBody mars = new CelestialBody(
                 "Mars",
-                new Vector3f(2.066e11f, 0, 0),  // Pericenter: a*(1-e) = 2.279e11 * (1-0.0934)
-                new Vector3f(0, 0, 26500),      // Prędkość na pericenter
+                new Vector3f(0, 0, 0),  // placeholder, set by computeOrbitalState
+                new Vector3f(0, 0, 0),  // placeholder, set by computeOrbitalState
                 6.417e23f,
                 3.389e6f,
                 2.279e11,   // SemiMajorAxis
                 0.0934,     // Eccentricity
-                0,          // Inclination
-                0,          // AscendingNode
-                0,          // ArgOfPericenter
-                0           // MeanAnomaly
+                Math.toRadians(1.85),    // Inclination (1.85° do ekliptyki)
+                Math.toRadians(49.6),    // AscendingNode (49.6°)
+                Math.toRadians(286.5),   // ArgOfPericenter (286.5°)
+                0,          // MeanAnomaly (= 0 na pericenter)
+                BodyType.TERRESTRIAL
+        );
+
+        // Jupiter — gas giant
+        CelestialBody jupiter = new CelestialBody(
+                "Jupiter",
+                new Vector3f(0, 0, 0),  // placeholder, set by computeOrbitalState
+                new Vector3f(0, 0, 0),  // placeholder, set by computeOrbitalState
+                1.898e27f,
+                6.991e7f,
+                7.785e11,   // SemiMajorAxis
+                0.0489,     // Eccentricity
+                Math.toRadians(1.30),    // Inclination
+                Math.toRadians(100.5),   // AscendingNode
+                Math.toRadians(273.9),   // ArgOfPericenter
+                0,          // MeanAnomaly
+                BodyType.GAS_GIANT
+        );
+
+        // Saturn — gas giant
+        CelestialBody saturn = new CelestialBody(
+                "Saturn",
+                new Vector3f(0, 0, 0),  // placeholder, set by computeOrbitalState
+                new Vector3f(0, 0, 0),  // placeholder, set by computeOrbitalState
+                5.683e26f,
+                5.823e7f,
+                1.434e12,   // SemiMajorAxis
+                0.0565,     // Eccentricity
+                Math.toRadians(2.49),    // Inclination
+                Math.toRadians(113.7),   // AscendingNode
+                Math.toRadians(339.3),   // ArgOfPericenter
+                0,          // MeanAnomaly
+                BodyType.GAS_GIANT
+        );
+
+        // Uranus — ice giant
+        CelestialBody uranus = new CelestialBody(
+                "Uranus",
+                new Vector3f(0, 0, 0),  // placeholder, set by computeOrbitalState
+                new Vector3f(0, 0, 0),  // placeholder, set by computeOrbitalState
+                8.681e25f,
+                2.536e7f,
+                2.871e12,   // SemiMajorAxis
+                0.0457,     // Eccentricity
+                Math.toRadians(0.77),    // Inclination
+                Math.toRadians(74.0),    // AscendingNode
+                Math.toRadians(96.9),    // ArgOfPericenter
+                0,          // MeanAnomaly
+                BodyType.ICE_GIANT
+        );
+
+        // Neptune — ice giant
+        CelestialBody neptune = new CelestialBody(
+                "Neptune",
+                new Vector3f(0, 0, 0),  // placeholder, set by computeOrbitalState
+                new Vector3f(0, 0, 0),  // placeholder, set by computeOrbitalState
+                1.024e26f,
+                2.462e7f,
+                4.495e12,   // SemiMajorAxis
+                0.0113,     // Eccentricity
+                Math.toRadians(1.77),    // Inclination
+                Math.toRadians(131.8),   // AscendingNode
+                Math.toRadians(272.8),   // ArgOfPericenter
+                0,          // MeanAnomaly
+                BodyType.ICE_GIANT
         );
 
         // Add bodies
         engine.addBody(sun);
+        engine.addBody(mercury);
+        engine.addBody(venus);
         engine.addBody(earth);
         engine.addBody(mars);
+        engine.addBody(jupiter);
+        engine.addBody(saturn);
+        engine.addBody(uranus);
+        engine.addBody(neptune);
+
+        // Compute initial position and velocity from orbital elements so that
+        // every planet starts exactly on its theoretical Keplerian orbit.
+        // This makes the placement consistent with inclination, ascending node
+        // and argument of pericenter — no matter what those values are.
+        engine.computeOrbitalState(mercury, sun.getMass());
+        engine.computeOrbitalState(venus,   sun.getMass());
+        engine.computeOrbitalState(earth,   sun.getMass());
+        engine.computeOrbitalState(mars,    sun.getMass());
+        engine.computeOrbitalState(jupiter, sun.getMass());
+        engine.computeOrbitalState(saturn,  sun.getMass());
+        engine.computeOrbitalState(uranus,  sun.getMass());
+        engine.computeOrbitalState(neptune, sun.getMass());
 
         // Generate theoretical orbits at startup
         System.out.println("Generating Keplerian orbits...");

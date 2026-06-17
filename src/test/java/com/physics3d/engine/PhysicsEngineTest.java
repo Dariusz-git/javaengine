@@ -1,5 +1,6 @@
 package com.physics3d.engine;
 
+import com.physics3d.model.BodyType;
 import com.physics3d.model.CelestialBody;
 import org.joml.Vector3f;
 import org.junit.Before;
@@ -31,7 +32,8 @@ public class PhysicsEngineTest {
             0,  // Inclination
             0,  // AscendingNode
             0,  // ArgOfPericenter
-            0   // MeanAnomaly
+            0,  // MeanAnomaly
+            BodyType.TERRESTRIAL
         );
 
         engine.addBody(body);
@@ -51,7 +53,8 @@ public class PhysicsEngineTest {
             0,  // Inclination
             0,  // AscendingNode
             0,  // ArgOfPericenter
-            0   // MeanAnomaly
+            0,  // MeanAnomaly
+            BodyType.TERRESTRIAL
         );
 
         CelestialBody body2 = new CelestialBody(
@@ -65,7 +68,8 @@ public class PhysicsEngineTest {
             0,  // Inclination
             0,  // AscendingNode
             0,  // ArgOfPericenter
-            0   // MeanAnomaly
+            0,  // MeanAnomaly
+            BodyType.TERRESTRIAL
         );
 
         engine.addBody(body1);
@@ -87,7 +91,8 @@ public class PhysicsEngineTest {
             0,  // Inclination
             0,  // AscendingNode
             0,  // ArgOfPericenter
-            0   // MeanAnomaly
+            0,  // MeanAnomaly
+            BodyType.TERRESTRIAL
         );
 
         engine.addBody(body);

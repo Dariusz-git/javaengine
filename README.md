@@ -90,9 +90,6 @@ Where:
 MIT License
 
 Plan
-Orbital trails - rysować ścieżkę za każdą planetą
-HUD z informacjami - wyświetlać nazwę planety, prędkość, masę
-Symulacja przyspieszenia czasu - klawisz +/- do szybszej/wolniejszej symulacji
 Więcej planet - dodać Wenus, Jowisza, Saturna itp.
 
 Collision detection - wykrywanie zderzeń między planetami
