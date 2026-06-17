@@ -71,7 +71,7 @@ Where:
 
 ## Future Enhancements
 
-- [ ] Add more celestial bodies (Venus, Jupiter, Saturn, etc.)
+- [x] Add more celestial bodies (Venus, Jupiter, Saturn, etc.)
 - [ ] Implement collision detection
 - [x] Add camera controls for better visualization
 - [x] Implement orbital trails
@@ -90,7 +90,6 @@ Where:
 MIT License
 
 Plan
-Więcej planet - dodać Wenus, Jowisza, Saturna itp.
 
 Collision detection - wykrywanie zderzeń między planetami
 Konfiguracja ze scenariuszy - wczytać z pliku JSON/XML zamiast hardcode'u

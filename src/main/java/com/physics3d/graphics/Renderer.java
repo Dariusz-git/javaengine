@@ -51,6 +51,8 @@ public class Renderer {
     private TextRenderer textRenderer;
     private int selectedIndex = -1; // -1 = no selection; otherwise index into the body list
     private boolean tabPressed = false; // edge-detect for Tab key
+    private boolean tabShift = false;   // true when Tab is pressed together with Shift
+    private boolean trackingEnabled = false; // true when camera follows the selected body
 
     // ---- Time speed control ----
     private PhysicsEngine physicsEngine;
@@ -115,8 +117,10 @@ public class Renderer {
             }
 
             // Tab cycles through celestial bodies for the HUD.
+            // Tab + Shift cycles in the opposite direction.
             if (key == GLFW.GLFW_KEY_TAB && action == GLFW.GLFW_PRESS) {
                 tabPressed = true;
+                tabShift = (mods & GLFW.GLFW_MOD_SHIFT) != 0;
             }
 
             // Time speed controls: UP arrow = faster, DOWN arrow = slower
@@ -217,6 +221,16 @@ public class Renderer {
 
     /** Handle keyboard panning of the camera target. Called once per frame. */
     private void processInput() {
+        // Any WASD press disables planet tracking and returns to free camera control.
+        if (trackingEnabled) {
+            if (GLFW.glfwGetKey(window, GLFW.GLFW_KEY_W) == GLFW.GLFW_PRESS
+                    || GLFW.glfwGetKey(window, GLFW.GLFW_KEY_S) == GLFW.GLFW_PRESS
+                    || GLFW.glfwGetKey(window, GLFW.GLFW_KEY_A) == GLFW.GLFW_PRESS
+                    || GLFW.glfwGetKey(window, GLFW.GLFW_KEY_D) == GLFW.GLFW_PRESS) {
+                trackingEnabled = false;
+            }
+        }
+
         float panSpeed = camDistance * 0.02f;
 
         // Camera forward direction projected onto the XZ plane
@@ -294,6 +308,15 @@ public class Renderer {
         GL11.glClear(GL11.GL_COLOR_BUFFER_BIT | GL11.GL_DEPTH_BUFFER_BIT);
 
         setupProjection();
+
+        // If tracking is enabled and a body is selected, follow its current position.
+        if (trackingEnabled && selectedIndex >= 0 && selectedIndex < bodies.size()) {
+            Vector3f trackedPos = bodies.get(selectedIndex).getPosition();
+            targetX = trackedPos.x * WORLD_SCALE;
+            targetY = trackedPos.y * WORLD_SCALE;
+            targetZ = trackedPos.z * WORLD_SCALE;
+        }
+
         setupCamera();
 
         // Find sun position first
@@ -438,13 +461,23 @@ public class Renderer {
     private void renderHud(List<CelestialBody> bodies) {
         TextRenderer tr = getTextRenderer();
 
-        // Handle Tab press: cycle to the next body (or wrap).
+        // Handle Tab press: cycle to the next body (or wrap) and enable planet tracking.
+        // Tab + Shift cycles in the opposite direction.
         if (tabPressed) {
             tabPressed = false;
+            boolean reverse = tabShift;
+            tabShift = false;
             if (bodies.isEmpty()) {
                 selectedIndex = -1;
+                trackingEnabled = false;
             } else {
-                selectedIndex = (selectedIndex + 1) % bodies.size();
+                int n = bodies.size();
+                if (reverse) {
+                    selectedIndex = ((selectedIndex - 1) % n + n) % n;
+                } else {
+                    selectedIndex = (selectedIndex + 1) % n;
+                }
+                trackingEnabled = true;
             }
         }
 
