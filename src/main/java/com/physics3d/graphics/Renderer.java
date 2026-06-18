@@ -36,14 +36,22 @@ public class Renderer {
     private static final float WORLD_SCALE = 1e-9f;
     // Minimum drawn radius in scene units so bodies stay visible at system scale
     private static final float MIN_DRAW_RADIUS = 5e9f * WORLD_SCALE;
-    // Dodaj te pola na poziomie klasy (za minimalnym promieniem):
-    private Vector3f sunPosition = new Vector3f(0, 0, 0);  // Sun position in world space
-    private static final Vector3f LIGHT_DIRECTION = new Vector3f(0, 1, 0);  // Up vector for ambient
-    private static final float[] AMBIENT_COLOR = {0.3f, 0.3f, 0.3f};
-    private static final float[] DIFFUSE_INTENSITY = {0.7f, 0.7f, 0.7f};
-    // Sphere tessellation
-    private static final int SPHERE_STACKS = 16;
-    private static final int SPHERE_SLICES = 24;
+    // Sun position in world space (updated each frame from the body list)
+    private Vector3f sunPosition = new Vector3f(0, 0, 0);
+    // Lighting parameters
+    private static final float[] AMBIENT_COLOR = {0.08f, 0.08f, 0.12f, 1.0f};
+    private static final float[] SUN_DIFFUSE = {1.0f, 0.95f, 0.85f, 1.0f};
+    private static final float[] SUN_SPECULAR = {1.0f, 1.0f, 0.9f, 1.0f};
+    private static final float SHININESS = 32.0f;
+    // Sphere tessellation (higher = smoother lighting)
+    private static final int SPHERE_STACKS = 24;
+    private static final int SPHERE_SLICES = 32;
+
+    // Starfield: pre-generated random star positions (in scene units, far away)
+    private static final int STAR_COUNT = 1500;
+    private final float[] starPositions = new float[STAR_COUNT * 3];
+    private final float[] starColors = new float[STAR_COUNT * 3];
+    private boolean starsInitialized = false;
 
     private boolean showTrails = true; // Toggle with T key
 
@@ -82,6 +90,7 @@ public class Renderer {
         initGLFW();
         createWindow(title);
         initOpenGL();
+        initStarfield();
     }
 
     /** Set the physics engine reference for time speed control. */
@@ -215,8 +224,74 @@ public class Renderer {
 
     private void initOpenGL() {
         GL.createCapabilities();
-        GL11.glClearColor(0.0f, 0.0f, 0.05f, 1.0f);
+        GL11.glClearColor(0.0f, 0.0f, 0.02f, 1.0f);
         GL11.glEnable(GL11.GL_DEPTH_TEST);
+        GL11.glDepthFunc(GL11.GL_LEQUAL);
+        GL11.glEnable(GL11.GL_CULL_FACE);
+        GL11.glCullFace(GL11.GL_BACK);
+        GL11.glFrontFace(GL11.GL_CCW);
+
+        // Enable per-vertex lighting with proper normals
+        GL11.glEnable(GL11.GL_LIGHTING);
+        GL11.glEnable(GL11.GL_LIGHT0);
+        GL11.glEnable(GL11.GL_COLOR_MATERIAL);
+        GL11.glColorMaterial(GL11.GL_FRONT_AND_BACK, GL11.GL_AMBIENT_AND_DIFFUSE);
+
+        // Set up light 0 (the Sun) - position will be updated each frame
+        GL11.glLightfv(GL11.GL_LIGHT0, GL11.GL_AMBIENT, AMBIENT_COLOR);
+        GL11.glLightfv(GL11.GL_LIGHT0, GL11.GL_DIFFUSE, SUN_DIFFUSE);
+        GL11.glLightfv(GL11.GL_LIGHT0, GL11.GL_SPECULAR, SUN_SPECULAR);
+
+        // Specular material settings (per-body via glMaterialfv)
+        float[] matSpec = {1.0f, 1.0f, 1.0f, 1.0f};
+        GL11.glMaterialfv(GL11.GL_FRONT_AND_BACK, GL11.GL_SPECULAR, matSpec);
+        GL11.glMaterialf(GL11.GL_FRONT_AND_BACK, GL11.GL_SHININESS, SHININESS);
+
+        // Normalize normals so lighting is correct regardless of sphere scale
+        GL11.glEnable(GL11.GL_NORMALIZE);
+
+        // Initialize starfield
+        initStars();
+    }
+
+    /** Generate random star positions on a large sphere around the scene. */
+    private void initStars() {
+        if (starsInitialized) return;
+        java.util.Random rng = new java.util.Random(42L); // fixed seed for reproducibility
+        float starRadius = 200000.0f; // far away in scene units
+        for (int i = 0; i < STAR_COUNT; i++) {
+            // Uniform sphere distribution
+            double u = rng.nextDouble();
+            double v = rng.nextDouble();
+            double theta = 2.0 * Math.PI * u;
+            double phi = Math.acos(2.0 * v - 1.0);
+            float x = (float) (starRadius * Math.sin(phi) * Math.cos(theta));
+            float y = (float) (starRadius * Math.cos(phi));
+            float z = (float) (starRadius * Math.sin(phi) * Math.sin(theta));
+            starPositions[i * 3] = x;
+            starPositions[i * 3 + 1] = y;
+            starPositions[i * 3 + 2] = z;
+            // Vary star color slightly (white to pale yellow/blue)
+            float brightness = 0.5f + rng.nextFloat() * 0.5f;
+            float colorVar = rng.nextFloat();
+            if (colorVar < 0.7f) {
+                // White-ish
+                starColors[i * 3] = brightness;
+                starColors[i * 3 + 1] = brightness;
+                starColors[i * 3 + 2] = brightness;
+            } else if (colorVar < 0.85f) {
+                // Pale yellow
+                starColors[i * 3] = brightness;
+                starColors[i * 3 + 1] = brightness * 0.95f;
+                starColors[i * 3 + 2] = brightness * 0.7f;
+            } else {
+                // Pale blue
+                starColors[i * 3] = brightness * 0.7f;
+                starColors[i * 3 + 1] = brightness * 0.85f;
+                starColors[i * 3 + 2] = brightness;
+            }
+        }
+        starsInitialized = true;
     }
 
     /** Handle keyboard panning of the camera target. Called once per frame. */
@@ -327,8 +402,13 @@ public class Renderer {
                 break;
             }
         }
-        // Draw theoretical orbits (idealne elipsy)
-        GL11.glColor3f(0.3f, 0.3f, 0.5f);  // Ciemniejszy kolor
+
+        // ---- Draw starfield background (no lighting, no depth write) ----
+        drawStarfield();
+
+        // ---- Draw theoretical orbits (ideal ellipses) ----
+        GL11.glDisable(GL11.GL_LIGHTING);
+        GL11.glColor3f(0.3f, 0.3f, 0.5f);
         for (CelestialBody body : bodies) {
             Queue<Vector3f> theoretical = body.getTrail().getTheoreticalOrbit();
             if (theoretical.size() > 1) {
@@ -340,8 +420,8 @@ public class Renderer {
             }
         }
 
-// Draw actual trajectory (z symulacji)
-        GL11.glColor3f(0.8f, 0.8f, 0.2f);  // Jaśniejszy kolor
+        // ---- Draw actual trajectory (from simulation) ----
+        GL11.glColor3f(0.8f, 0.8f, 0.2f);
         for (CelestialBody body : bodies) {
             Queue<Vector3f> actual = body.getTrail().getPositions();
             if (actual.size() > 1) {
@@ -352,35 +432,30 @@ public class Renderer {
                 GL11.glEnd();
             }
         }
-        // Draw orbital trails
-        // Draw orbital trails
+
+        // ---- Draw orbital trails ----
         if (showTrails) {
-            GL11.glColor3f(0.5f, 0.5f, 0.5f);
             GL11.glLineWidth(1.0f);
             GL11.glDisable(GL11.GL_DEPTH_TEST);
 
             for (CelestialBody body : bodies) {
                 Queue<Vector3f> theoretical = body.getTrail().getTheoreticalOrbit();
                 if (theoretical.size() > 1) {
-                    GL11.glColor3f(0.3f, 0.3f, 0.6f);  // Ciemniejsza - teoretyczna
+                    GL11.glColor3f(0.3f, 0.3f, 0.6f);
                     GL11.glBegin(GL11.GL_LINE_STRIP);
-
                     Vector3f[] theoryArray = theoretical.toArray(new Vector3f[0]);
                     for (Vector3f pos : theoryArray) {
                         GL11.glVertex3f(pos.x * WORLD_SCALE, pos.y * WORLD_SCALE, pos.z * WORLD_SCALE);
                     }
-                    // Zamknij teoretyczną orbitę
                     if (theoryArray.length > 0) {
                         GL11.glVertex3f(theoryArray[0].x * WORLD_SCALE, theoryArray[0].y * WORLD_SCALE, theoryArray[0].z * WORLD_SCALE);
                     }
                     GL11.glEnd();
                 }
 
-
-                // ⭐ POTEM rysuj rzeczywistą trajektorię (z symulacji)
                 Queue<Vector3f> positions = body.getTrail().getPositions();
                 if (positions.size() > 1) {
-                    GL11.glColor3f(0.8f, 0.8f, 0.2f);  // Jaśniejsza - rzeczywista
+                    GL11.glColor3f(0.8f, 0.8f, 0.2f);
                     GL11.glBegin(GL11.GL_LINE_STRIP);
                     Vector3f[] posArray = positions.toArray(new Vector3f[0]);
                     for (Vector3f pos : posArray) {
@@ -394,7 +469,11 @@ public class Renderer {
             GL11.glLineWidth(1.0f);
         }
 
-
+        // ---- Draw celestial bodies with proper lighting ----
+        GL11.glEnable(GL11.GL_LIGHTING);
+        // Update light 0 position to the Sun (in world space)
+        float[] lightPos = {sunPosition.x, sunPosition.y, sunPosition.z, 1.0f};
+        GL11.glLightfv(GL11.GL_LIGHT0, GL11.GL_POSITION, lightPos);
 
         for (CelestialBody body : bodies) {
             Vector3f pos = body.getPosition();
@@ -406,40 +485,84 @@ public class Renderer {
             float[] baseColor = colorFor(body.getName());
 
             if ("Sun".equals(body.getName())) {
-                // Sun emits light: full brightness
+                // Sun: emit light, no shading. Disable lighting for the Sun itself.
+                GL11.glDisable(GL11.GL_LIGHTING);
                 GL11.glColor3f(baseColor[0], baseColor[1], baseColor[2]);
+                GL11.glPushMatrix();
+                GL11.glTranslatef(x, y, z);
+                drawSphere(r, SPHERE_STACKS, SPHERE_SLICES);
+                GL11.glPopMatrix();
+                // Draw atmospheric glow around the Sun
+                drawSunGlow(x, y, z, r);
+                GL11.glEnable(GL11.GL_LIGHTING);
             } else {
-                // Planets: apply Lambertian diffuse lighting from Sun
-                Vector3f bodyPos = new Vector3f(x, y, z);
-                Vector3f toSun = new Vector3f(sunPosition).sub(bodyPos);
-                float distToSun = toSun.length();
-                if (distToSun > 0.001f) {
-                    toSun.normalize();
-                }
+                // Planets: use OpenGL lighting with per-vertex normals
+                // Set the base color (diffuse + ambient via COLOR_MATERIAL)
+                GL11.glColor3f(baseColor[0], baseColor[1], baseColor[2]);
+                // Set specular intensity per body (gas giants get less specular)
+                float[] spec = specularFor(body.getName());
+                GL11.glMaterialfv(GL11.GL_FRONT_AND_BACK, GL11.GL_SPECULAR, spec);
+                GL11.glMaterialf(GL11.GL_FRONT_AND_BACK, GL11.GL_SHININESS, shininessFor(body.getName()));
 
-                // Surface normal (from center outward) - use approximate normal
-                // For a sphere at position bodyPos, normal at surface points outward
-                float diffuse = Math.max(0.2f, toSun.dot(new Vector3f(x, y, z).normalize()) * 0.5f + 0.5f);
-
-                // Apply lighting: ambient + diffuse
-                float litR = baseColor[0] * (0.3f + diffuse * 0.7f);
-                float litG = baseColor[1] * (0.3f + diffuse * 0.7f);
-                float litB = baseColor[2] * (0.3f + diffuse * 0.7f);
-
-                GL11.glColor3f(litR, litG, litB);
+                GL11.glPushMatrix();
+                GL11.glTranslatef(x, y, z);
+                drawSphere(r, SPHERE_STACKS, SPHERE_SLICES);
+                GL11.glPopMatrix();
             }
-
-            GL11.glPushMatrix();
-            GL11.glTranslatef(x, y, z);
-            drawSphere(r, SPHERE_STACKS, SPHERE_SLICES);
-            GL11.glPopMatrix();
         }
+
+        GL11.glDisable(GL11.GL_LIGHTING);
 
         // ---- HUD overlay (drawn last, on top of the 3D scene) ----
         renderHud(bodies);
 
         GLFW.glfwSwapBuffers(window);
         GLFW.glfwPollEvents();
+    }
+
+    /** Draw a starfield of randomly placed points on a large sphere. */
+    private void drawStarfield() {
+        GL11.glDisable(GL11.GL_LIGHTING);
+        GL11.glDisable(GL11.GL_DEPTH_TEST);
+        GL11.glPointSize(1.5f);
+
+        GL11.glBegin(GL11.GL_POINTS);
+        for (int i = 0; i < STAR_COUNT; i++) {
+            // Vary brightness slightly per star
+            float brightness = 0.6f + (i % 5) * 0.08f;
+            GL11.glColor3f(
+                starColors[i * 3] * brightness,
+                starColors[i * 3 + 1] * brightness,
+                starColors[i * 3 + 2] * brightness
+            );
+            GL11.glVertex3f(starPositions[i * 3], starPositions[i * 3 + 1], starPositions[i * 3 + 2]);
+        }
+        GL11.glEnd();
+
+        GL11.glEnable(GL11.GL_DEPTH_TEST);
+    }
+
+    /** Draw a soft glow around the Sun using additive blending. */
+    private void drawSunGlow(float x, float y, float z, float r) {
+        GL11.glEnable(GL11.GL_BLEND);
+        GL11.glBlendFunc(GL11.GL_SRC_ALPHA, GL11.GL_ONE); // additive
+        GL11.glDepthMask(false);
+
+        // Draw several concentric transparent shells for a corona effect
+        int layers = 6;
+        for (int layer = 1; layer <= layers; layer++) {
+            float shellRadius = r * (1.0f + layer * 0.6f);
+            float alpha = 0.18f / layer;
+            // Warm corona color
+            GL11.glColor4f(1.0f, 0.85f, 0.4f, alpha);
+            GL11.glPushMatrix();
+            GL11.glTranslatef(x, y, z);
+            drawSphere(shellRadius, 12, 16);
+            GL11.glPopMatrix();
+        }
+
+        GL11.glDepthMask(true);
+        GL11.glDisable(GL11.GL_BLEND);
     }
 
 
@@ -721,11 +844,92 @@ public class Renderer {
 
     private float[] colorFor(String name) {
         switch (name) {
-            case "Sun":   return new float[]{1.0f, 1.0f, 0.0f};     // Bright yellow
-            case "Earth": return new float[]{0.0f, 0.5f, 1.0f};     // Blue
-            case "Mars":  return new float[]{1.0f, 0.5f, 0.0f};     // Orange
-            default:      return new float[]{0.8f, 0.8f, 0.8f};     // Gray
+            case "Sun":     return new float[]{1.0f, 1.0f, 0.0f};     // Bright yellow
+            case "Mercury": return new float[]{0.7f, 0.7f, 0.65f};    // Pale gray
+            case "Venus":   return new float[]{0.95f, 0.85f, 0.55f};  // Pale yellow
+            case "Earth":   return new float[]{0.15f, 0.45f, 0.85f};  // Blue
+            case "Mars":    return new float[]{0.85f, 0.4f, 0.15f};   // Red-orange
+            case "Jupiter": return new float[]{0.85f, 0.7f, 0.5f};    // Tan
+            case "Saturn":  return new float[]{0.9f, 0.8f, 0.55f};    // Pale gold
+            case "Uranus":  return new float[]{0.65f, 0.85f, 0.9f};   // Pale cyan
+            case "Neptune": return new float[]{0.3f, 0.45f, 0.85f};   // Deep blue
+            default:        return new float[]{0.8f, 0.8f, 0.8f};     // Gray
         }
+    }
+
+    /** Per-body specular intensity (RGB). Gas giants get less specular (more matte). */
+    private float[] specularFor(String name) {
+        switch (name) {
+            case "Sun":     return new float[]{0.0f, 0.0f, 0.0f, 1.0f};
+            case "Mercury": return new float[]{0.4f, 0.4f, 0.4f, 1.0f};
+            case "Venus":   return new float[]{0.3f, 0.3f, 0.3f, 1.0f};
+            case "Earth":   return new float[]{0.6f, 0.6f, 0.6f, 1.0f};
+            case "Mars":    return new float[]{0.2f, 0.2f, 0.2f, 1.0f};
+            case "Jupiter": return new float[]{0.1f, 0.1f, 0.1f, 1.0f};
+            case "Saturn":  return new float[]{0.15f, 0.15f, 0.15f, 1.0f};
+            case "Uranus":  return new float[]{0.4f, 0.4f, 0.4f, 1.0f};
+            case "Neptune": return new float[]{0.5f, 0.5f, 0.5f, 1.0f};
+            default:        return new float[]{0.3f, 0.3f, 0.3f, 1.0f};
+        }
+    }
+
+    /** Per-body shininess exponent (higher = smaller, sharper highlight). */
+    private float shininessFor(String name) {
+        switch (name) {
+            case "Earth":   return 64.0f;
+            case "Mercury": return 48.0f;
+            case "Venus":   return 24.0f;
+            case "Mars":    return 16.0f;
+            case "Jupiter": return 8.0f;
+            case "Saturn":  return 8.0f;
+            case "Uranus":  return 32.0f;
+            case "Neptune": return 48.0f;
+            default:        return SHININESS;
+        }
+    }
+
+    /** Initialize the starfield: random points on a large sphere with varied colors. */
+    private void initStarfield() {
+        if (starsInitialized) return;
+        java.util.Random rng = new java.util.Random(42L); // deterministic seed
+        float radius = 5000.0f; // far away in scene units
+        for (int i = 0; i < STAR_COUNT; i++) {
+            // Uniform random direction on a sphere
+            double u = rng.nextDouble() * 2.0 - 1.0;
+            double theta = rng.nextDouble() * 2.0 * Math.PI;
+            double sq = Math.sqrt(1.0 - u * u);
+            float sx = (float) (sq * Math.cos(theta)) * radius;
+            float sy = (float) u * radius;
+            float sz = (float) (sq * Math.sin(theta)) * radius;
+            starPositions[i * 3]     = sx;
+            starPositions[i * 3 + 1] = sy;
+            starPositions[i * 3 + 2] = sz;
+
+            // Slight color variation: white-ish with subtle tint
+            float tint = (float) rng.nextDouble();
+            if (tint < 0.6f) {
+                // White
+                starColors[i * 3]     = 1.0f;
+                starColors[i * 3 + 1] = 1.0f;
+                starColors[i * 3 + 2] = 1.0f;
+            } else if (tint < 0.8f) {
+                // Bluish
+                starColors[i * 3]     = 0.7f;
+                starColors[i * 3 + 1] = 0.85f;
+                starColors[i * 3 + 2] = 1.0f;
+            } else if (tint < 0.95f) {
+                // Yellowish
+                starColors[i * 3]     = 1.0f;
+                starColors[i * 3 + 1] = 0.95f;
+                starColors[i * 3 + 2] = 0.7f;
+            } else {
+                // Reddish
+                starColors[i * 3]     = 1.0f;
+                starColors[i * 3 + 1] = 0.7f;
+                starColors[i * 3 + 2] = 0.6f;
+            }
+        }
+        starsInitialized = true;
     }
 
     /** Draw a unit-based sphere of the given radius using a lat/long mesh of quads. */

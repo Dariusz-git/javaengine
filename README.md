@@ -76,7 +76,7 @@ Where:
 - [x] Add camera controls for better visualization
 - [x] Implement orbital trails
 - [x] Add time acceleration/deceleration controls
-- [ ] Improve rendering with textures and lighting
+- [x] Improve rendering with textures and lighting
 - [ ] Add configuration file support for custom scenarios
 
 ## Dependencies
@@ -93,7 +93,6 @@ Plan
 
 Collision detection - wykrywanie zderzeń między planetami
 Konfiguracja ze scenariuszy - wczytać z pliku JSON/XML zamiast hardcode'u
-Śledzenie wybranej planety - kamera autom. podąża za planetą
 Lepsza fizyka - Verlet integration zamiast Eulera
 
 Shader rendering - OpenGL shaders zamiast fixed-function pipeline
