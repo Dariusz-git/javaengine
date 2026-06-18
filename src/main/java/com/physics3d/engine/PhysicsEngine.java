@@ -87,7 +87,7 @@ public class PhysicsEngine {
             // body.recordPosition(); funkcja wyłączona, orbita jest teraz generowana zały czas nie trzeba zapisywać
             recordCounter++;
             if (recordCounter % RECORD_INTERVAL == 0) {
-                body.recordPosition();
+                body.recordPosition(getUniverseAgeYears());
             }
         }
 

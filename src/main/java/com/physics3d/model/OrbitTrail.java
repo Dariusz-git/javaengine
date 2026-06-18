@@ -8,7 +8,7 @@ import java.util.Queue;
  * Tracks the orbital path of a celestial body
  */
 public class OrbitTrail {
-    private final Queue<Vector3f> positions;
+    private final Queue<TrailPoint> positions;
     private final Queue<Vector3f> theoreticalOrbit; // Idealna orbita
     private final int maxLength;
 
@@ -23,14 +23,25 @@ public class OrbitTrail {
         this.theoreticalOrbit.addAll(orbit);
     }
 
-    public void addPosition(Vector3f position) {
-        positions.add(new Vector3f(position));
+    /**
+     * Adds a position with the given simulation time (in years) for age-based fading.
+     */
+    public void addPosition(Vector3f position, double simulationTimeYears) {
+        positions.add(new TrailPoint(new Vector3f(position), simulationTimeYears));
         if (positions.size() > maxLength) {
             positions.poll();
         }
     }
 
-    public Queue<Vector3f> getPositions() {
+    /**
+     * @deprecated Use {@link #addPosition(Vector3f, double)} to record simulation time.
+     */
+    @Deprecated
+    public void addPosition(Vector3f position) {
+        addPosition(position, 0.0);
+    }
+
+    public Queue<TrailPoint> getPositions() {
         return positions;
     }
 
@@ -42,4 +53,16 @@ public class OrbitTrail {
         positions.clear();
     }
 
+    /**
+     * A single point on the dynamic orbit trail, with the simulation time at which it was recorded.
+     */
+    public static class TrailPoint {
+        public final Vector3f position;
+        public final double timeYears;
+
+        public TrailPoint(Vector3f position, double timeYears) {
+            this.position = position;
+            this.timeYears = timeYears;
+        }
+    }
 }

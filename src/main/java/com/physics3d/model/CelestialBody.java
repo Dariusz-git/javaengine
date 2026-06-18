@@ -30,7 +30,14 @@ public class CelestialBody {
     }
 
     public void recordPosition() {
-        trail.addPosition(position);
+        trail.addPosition(position, 0.0);
+    }
+
+    /**
+     * Records the current position with the given simulation time (in years) for age-based fading.
+     */
+    public void recordPosition(double simulationTimeYears) {
+        trail.addPosition(position, simulationTimeYears);
     }
 
     public CelestialBody(String name, Vector3f position, Vector3f velocity,

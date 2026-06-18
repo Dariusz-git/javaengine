@@ -77,6 +77,7 @@ Where:
 - [x] Implement orbital trails
 - [x] Add time acceleration/deceleration controls
 - [x] Improve rendering with textures and lighting
+- [x] Dynamic orbit fading (5 years) and white color
 - [ ] Add configuration file support for custom scenarios
 
 ## Dependencies

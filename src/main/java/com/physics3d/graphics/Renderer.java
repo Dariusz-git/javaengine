@@ -2,6 +2,7 @@ package com.physics3d.graphics;
 
 import com.physics3d.engine.PhysicsEngine;
 import com.physics3d.model.CelestialBody;
+import com.physics3d.model.OrbitTrail;
 import org.joml.Matrix4f;
 import org.joml.Vector3f;
 import org.lwjgl.BufferUtils;
@@ -54,6 +55,12 @@ public class Renderer {
     private boolean starsInitialized = false;
 
     private boolean showTrails = true; // Toggle with T key
+
+    // Dynamic orbit fade: oldest trail point (1 simulation year old) is fully transparent,
+    // newest point is fully opaque. Linear fade.
+    private static final double TRAIL_FADE_YEARS = 1.0;
+    // Current simulation time (in years), updated each frame for trail fade calculations.
+    private double currentSimTimeYears = 0.0;
 
     // ---- HUD / planet selection ----
     private TextRenderer textRenderer;
@@ -384,6 +391,12 @@ public class Renderer {
 
         setupProjection();
 
+        // Update current simulation time (in years) for trail fade calculations
+        currentSimTimeYears = bodies.isEmpty() ? 0.0
+                : bodies.get(0).getTrail().getPositions().stream()
+                        .mapToDouble(p -> p.timeYears)
+                        .max().orElse(0.0);
+
         // If tracking is enabled and a body is selected, follow its current position.
         if (trackingEnabled && selectedIndex >= 0 && selectedIndex < bodies.size()) {
             Vector3f trackedPos = bodies.get(selectedIndex).getPosition();
@@ -421,17 +434,25 @@ public class Renderer {
         }
 
         // ---- Draw actual trajectory (from simulation) ----
-        GL11.glColor3f(0.8f, 0.8f, 0.2f);
+        // White color, with linear alpha fade based on age (oldest = transparent, newest = opaque)
+        GL11.glEnable(GL11.GL_BLEND);
+        GL11.glBlendFunc(GL11.GL_SRC_ALPHA, GL11.GL_ONE_MINUS_SRC_ALPHA);
         for (CelestialBody body : bodies) {
-            Queue<Vector3f> actual = body.getTrail().getPositions();
+            Queue<OrbitTrail.TrailPoint> actual = body.getTrail().getPositions();
             if (actual.size() > 1) {
                 GL11.glBegin(GL11.GL_LINE_STRIP);
-                for (Vector3f pos : actual) {
-                    GL11.glVertex3f(pos.x * WORLD_SCALE, pos.y * WORLD_SCALE, pos.z * WORLD_SCALE);
+                for (OrbitTrail.TrailPoint point : actual) {
+                    float alpha = (float) Math.max(0.0, Math.min(1.0,
+                            1.0 - (currentSimTimeYears - point.timeYears) / TRAIL_FADE_YEARS));
+                    GL11.glColor4f(1.0f, 1.0f, 1.0f, alpha);
+                    GL11.glVertex3f(point.position.x * WORLD_SCALE,
+                                    point.position.y * WORLD_SCALE,
+                                    point.position.z * WORLD_SCALE);
                 }
                 GL11.glEnd();
             }
         }
+        GL11.glDisable(GL11.GL_BLEND);
 
         // ---- Draw orbital trails ----
         if (showTrails) {
@@ -453,15 +474,22 @@ public class Renderer {
                     GL11.glEnd();
                 }
 
-                Queue<Vector3f> positions = body.getTrail().getPositions();
+                Queue<OrbitTrail.TrailPoint> positions = body.getTrail().getPositions();
                 if (positions.size() > 1) {
-                    GL11.glColor3f(0.8f, 0.8f, 0.2f);
+                    GL11.glEnable(GL11.GL_BLEND);
+                    GL11.glBlendFunc(GL11.GL_SRC_ALPHA, GL11.GL_ONE_MINUS_SRC_ALPHA);
                     GL11.glBegin(GL11.GL_LINE_STRIP);
-                    Vector3f[] posArray = positions.toArray(new Vector3f[0]);
-                    for (Vector3f pos : posArray) {
-                        GL11.glVertex3f(pos.x * WORLD_SCALE, pos.y * WORLD_SCALE, pos.z * WORLD_SCALE);
+                    OrbitTrail.TrailPoint[] posArray = positions.toArray(new OrbitTrail.TrailPoint[0]);
+                    for (OrbitTrail.TrailPoint point : posArray) {
+                        float alpha = (float) Math.max(0.0, Math.min(1.0,
+                                1.0 - (currentSimTimeYears - point.timeYears) / TRAIL_FADE_YEARS));
+                        GL11.glColor4f(1.0f, 1.0f, 1.0f, alpha);
+                        GL11.glVertex3f(point.position.x * WORLD_SCALE,
+                                        point.position.y * WORLD_SCALE,
+                                        point.position.z * WORLD_SCALE);
                     }
                     GL11.glEnd();
+                    GL11.glDisable(GL11.GL_BLEND);
                 }
             }
 
