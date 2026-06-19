@@ -10,9 +10,15 @@ import org.lwjgl.glfw.GLFW;
 import org.lwjgl.glfw.GLFWErrorCallback;
 import org.lwjgl.opengl.GL;
 import org.lwjgl.opengl.GL11;
+import org.lwjgl.opengl.GL15;
+import org.lwjgl.opengl.GL20;
+import org.lwjgl.opengl.GL30;
 
 import java.awt.Font;
 import java.nio.FloatBuffer;
+import java.time.LocalDate;
+import java.time.LocalTime;
+import java.time.format.DateTimeFormatter;
 import java.util.List;
 import java.util.Queue;
 
@@ -72,6 +78,12 @@ public class Renderer {
     // ---- Time speed control ----
     private PhysicsEngine physicsEngine;
     private boolean sliderDragging = false; // true when user is dragging the slider handle
+
+    // ---- Earth date/time (captured at startup from Windows system clock) ----
+    private final LocalDate earthDateAtStart = LocalDate.now();
+    private final LocalTime earthTimeAtStart = LocalTime.now();
+    private static final DateTimeFormatter DATE_FMT = DateTimeFormatter.ofPattern("yyyy:MM:dd");
+    private static final DateTimeFormatter TIME_FMT = DateTimeFormatter.ofPattern("h:mma");
 
     // ---- Orbit camera state ----
     private float camDistance = 800.0f;     // distance from target, in scene units
@@ -695,11 +707,12 @@ public class Renderer {
             }
         }
 
-        // --- Bottom-left: universe age ---
+        // --- Bottom-left: Earth date & time (captured at startup) ---
         if (physicsEngine != null) {
-            double ageYears = physicsEngine.getUniverseAgeYears();
-            String ageText = "Wiek wszechświata: " + formatWithSpaces((long) ageYears) + " lat";
-            tr.drawStringWithBackground(ageText, left, 10, titleColor, bgColor, padding);
+            String dateStr = earthDateAtStart.format(DATE_FMT);
+            String timeStr = earthTimeAtStart.format(TIME_FMT).toLowerCase();
+            String earthText = dateStr + "   " + timeStr;
+            tr.drawStringWithBackground(earthText, left, 10, titleColor, bgColor, padding);
         }
 
         // --- Bottom: time speed slider ---

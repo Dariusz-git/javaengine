@@ -78,6 +78,7 @@ Where:
 - [x] Add time acceleration/deceleration controls
 - [x] Improve rendering with textures and lighting
 - [x] Dynamic orbit fading (1 years) and white color
+- [x] Dynamic distance grid with screen-space adaptive LOD (G to toggle)
 - [ ] Add configuration file support for custom scenarios
 
 ## Dependencies
