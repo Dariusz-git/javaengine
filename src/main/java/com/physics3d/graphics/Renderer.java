@@ -62,6 +62,10 @@ public class Renderer {
 
     private boolean showTrails = true; // Toggle with T key
 
+    // TEMPORARY: blue Keplerian theoretical orbit is disabled while we work on
+    // a full orbit implementation using live ESA data. Flip to true to re-enable.
+    private boolean showTheoreticalOrbit = false;
+
     // Dynamic orbit fade: oldest trail point (1 simulation year old) is fully transparent,
     // newest point is fully opaque. Linear fade.
     private static final double TRAIL_FADE_YEARS = 1.0;
@@ -432,16 +436,19 @@ public class Renderer {
         drawStarfield();
 
         // ---- Draw theoretical orbits (ideal ellipses) ----
-        GL11.glDisable(GL11.GL_LIGHTING);
-        GL11.glColor3f(0.3f, 0.3f, 0.5f);
-        for (CelestialBody body : bodies) {
-            Queue<Vector3f> theoretical = body.getTrail().getTheoreticalOrbit();
-            if (theoretical.size() > 1) {
-                GL11.glBegin(GL11.GL_LINE_STRIP);
-                for (Vector3f pos : theoretical) {
-                    GL11.glVertex3f(pos.x * WORLD_SCALE, pos.y * WORLD_SCALE, pos.z * WORLD_SCALE);
+        // TEMPORARY: disabled while we work on a full orbit implementation using live ESA data.
+        if (showTheoreticalOrbit) {
+            GL11.glDisable(GL11.GL_LIGHTING);
+            GL11.glColor3f(0.3f, 0.3f, 0.5f);
+            for (CelestialBody body : bodies) {
+                Queue<Vector3f> theoretical = body.getTrail().getTheoreticalOrbit();
+                if (theoretical.size() > 1) {
+                    GL11.glBegin(GL11.GL_LINE_STRIP);
+                    for (Vector3f pos : theoretical) {
+                        GL11.glVertex3f(pos.x * WORLD_SCALE, pos.y * WORLD_SCALE, pos.z * WORLD_SCALE);
+                    }
+                    GL11.glEnd();
                 }
-                GL11.glEnd();
             }
         }
 
@@ -472,18 +479,22 @@ public class Renderer {
             GL11.glDisable(GL11.GL_DEPTH_TEST);
 
             for (CelestialBody body : bodies) {
-                Queue<Vector3f> theoretical = body.getTrail().getTheoreticalOrbit();
-                if (theoretical.size() > 1) {
-                    GL11.glColor3f(0.3f, 0.3f, 0.6f);
-                    GL11.glBegin(GL11.GL_LINE_STRIP);
-                    Vector3f[] theoryArray = theoretical.toArray(new Vector3f[0]);
-                    for (Vector3f pos : theoryArray) {
-                        GL11.glVertex3f(pos.x * WORLD_SCALE, pos.y * WORLD_SCALE, pos.z * WORLD_SCALE);
+                // TEMPORARY: blue Keplerian theoretical orbit disabled while we work on
+                // a full orbit implementation using live ESA data.
+                if (showTheoreticalOrbit) {
+                    Queue<Vector3f> theoretical = body.getTrail().getTheoreticalOrbit();
+                    if (theoretical.size() > 1) {
+                        GL11.glColor3f(0.3f, 0.3f, 0.6f);
+                        GL11.glBegin(GL11.GL_LINE_STRIP);
+                        Vector3f[] theoryArray = theoretical.toArray(new Vector3f[0]);
+                        for (Vector3f pos : theoryArray) {
+                            GL11.glVertex3f(pos.x * WORLD_SCALE, pos.y * WORLD_SCALE, pos.z * WORLD_SCALE);
+                        }
+                        if (theoryArray.length > 0) {
+                            GL11.glVertex3f(theoryArray[0].x * WORLD_SCALE, theoryArray[0].y * WORLD_SCALE, theoryArray[0].z * WORLD_SCALE);
+                        }
+                        GL11.glEnd();
                     }
-                    if (theoryArray.length > 0) {
-                        GL11.glVertex3f(theoryArray[0].x * WORLD_SCALE, theoryArray[0].y * WORLD_SCALE, theoryArray[0].z * WORLD_SCALE);
-                    }
-                    GL11.glEnd();
                 }
 
                 Queue<OrbitTrail.TrailPoint> positions = body.getTrail().getPositions();

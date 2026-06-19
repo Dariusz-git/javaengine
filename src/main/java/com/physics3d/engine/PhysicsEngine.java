@@ -176,6 +176,77 @@ public class PhysicsEngine {
         return orbitPositions;
     }
 
+    /**
+     * Generate a closed Keplerian orbit polyline for a body using its stored
+     * orbital elements (a, e, i, Ω, ω, M). The orbit is sampled uniformly in
+     * true anomaly from the body's current mean anomaly through one full
+     * revolution (M → M + 2π).
+     * <p>
+     * The result is a queue of {@code numPoints + 1} positions (the last point
+     * equals the first to close the loop visually). Positions are returned in
+     * the same world coordinate system as the body itself (XZ is the orbital
+     * reference plane, Y is "up").
+     * <p>
+     * The {@code sunPosition} and {@code sunMass} parameters are accepted for
+     * API symmetry with the rest of the engine but are not used here — the
+     * orbit is defined purely by the body's stored elements.
+     *
+     * @param body        Body whose orbital elements define the orbit
+     * @param sunPosition Position of the central body (unused, kept for API symmetry)
+     * @param sunMass     Mass of the central body (unused, kept for API symmetry)
+     * @param numPoints   Number of segments around the orbit
+     * @return Queue of orbit positions, ordered along the orbit
+     */
+    public Queue<Vector3f> generateKeplerianOrbit(CelestialBody body,
+                                                  Vector3f sunPosition,
+                                                  float sunMass,
+                                                  int numPoints) {
+        Queue<Vector3f> orbit = new LinkedList<>();
+
+        double a = body.getSemiMajorAxis();
+        double e = body.getEccentricity();
+        double i = body.getInclination();
+        double ascNode = body.getAscendingNode();
+        double argPeri = body.getArgOfPericenter();
+        double meanAnom = body.getMeanAnomaly();
+
+        if (a < 1e6 || numPoints < 3) {
+            // Sun or invalid orbit — return a single point at the origin
+            orbit.add(new Vector3f(0, 0, 0));
+            return orbit;
+        }
+
+        // 3-1-3 Euler rotation: Rz(ω) · Rx(i) · Rz(Ω)
+        Matrix3f orbitalRotation = new Matrix3f()
+                .rotationZ((float) argPeri)
+                .rotateX((float) i)
+                .rotateZ((float) ascNode);
+
+        double twoPi = 2.0 * Math.PI;
+        for (int k = 0; k <= numPoints; k++) {
+            // Sample true anomaly uniformly from meanAnom through meanAnom + 2π.
+            // For a circular orbit (e ≈ 0) true anomaly equals mean anomaly,
+            // so this gives a uniform angular spacing. For elliptical orbits
+            // the spacing in true anomaly is non-uniform in time, but it
+            // produces a visually smooth closed curve.
+            double theta = meanAnom + twoPi * k / numPoints;
+
+            // Radius at this true anomaly
+            double r = (a * (1.0 - e * e)) / (1.0 + e * Math.cos(theta));
+
+            // Position in the orbital plane (XZ plane, Y = 0)
+            double x_orb = r * Math.cos(theta);
+            double z_orb = r * Math.sin(theta);
+
+            Vector3f pos = new Vector3f((float) x_orb, 0.0f, (float) z_orb);
+            orbitalRotation.transform(pos);
+
+            orbit.add(pos);
+        }
+
+        return orbit;
+    }
+
 
     /**
      * Compute the initial position and velocity of a body so that it lies exactly
@@ -267,53 +338,164 @@ public class PhysicsEngine {
     }
 
     /**
-     * Generate perfect elliptical orbit using Kepler's equation
-     * @param body Body to generate orbit for
-     * @param sunPosition Position of the sun
-     * @param sunMass Mass of the sun
-     * @param numPoints Number of points to generate
-     * @return Queue of positions forming the elliptical orbit
+     * Derive classical orbital elements (a, e, i, Ω, ω, M) from a body's
+     * current position and velocity state vectors, then store them in the
+     * body so that {@link #generateKeplerianOrbit} and
+     * {@link #computeOrbitalState} will reproduce the same orbit.
+     * <p>
+     * This is the inverse of {@code computeOrbitalState}: given r⃗ and v⃗
+     * relative to the Sun (at the origin), we recover the six Keplerian
+     * elements using standard two-body mechanics.
+     *
+     * @param body    Body whose position/velocity are already set (SI units)
+     * @param sunMass Mass of the central body (kg)
      */
-    public Queue<Vector3f> generateKeplerianOrbit(CelestialBody body, Vector3f sunPosition, double sunMass, int numPoints) {
-        Queue<Vector3f> orbitPositions = new LinkedList<>();
+    public void deriveOrbitalElementsFromState(CelestialBody body, double sunMass) {
+        double mu = GRAVITATIONAL_CONSTANT * sunMass;
 
-        double a = body.getSemiMajorAxis();
-        double e = body.getEccentricity();
-        double i = body.getInclination();
-        double ascNode = body.getAscendingNode();
-        double argPeri = body.getArgOfPericenter();
-        double meanAnom = body.getMeanAnomaly();
+        // Position and velocity in double precision
+        double rx = body.getPosition().x;
+        double ry = body.getPosition().y;
+        double rz = body.getPosition().z;
+        double vx = body.getVelocity().x;
+        double vy = body.getVelocity().y;
+        double vz = body.getVelocity().z;
 
-        if (a < 1e6) {
-            System.out.println("WARNING: " + body.getName() + " has invalid orbit");
-            return orbitPositions;
+        double rMag = Math.sqrt(rx * rx + ry * ry + rz * rz);
+        double vMag = Math.sqrt(vx * vx + vy * vy + vz * vz);
+
+        if (rMag < 1e6) {
+            // Body is essentially at the origin — no meaningful orbit
+            return;
         }
 
-        // Pre-compute the orbital rotation matrix: Rz(Ω) · Rx(i) · Rz(ω)
-        // This is the standard 3-1-3 Euler sequence used in celestial mechanics.
-        // JOML Matrix3f uses float, so we cast the double angles once here.
-        Matrix3f orbitalRotation = new Matrix3f()
-                .rotationZ((float) argPeri)   // Rz(ω): rotate by argument of pericenter
-                .rotateX((float) i)           // Rx(i): tilt by inclination
-                .rotateZ((float) ascNode);    // Rz(Ω): rotate by longitude of ascending node
+        // ── Semi-major axis (vis-viva) ──────────────────────────────
+        // v² = μ (2/r − 1/a)  →  a = 1 / (2/r − v²/μ)
+        double a = 1.0 / (2.0 / rMag - (vMag * vMag) / mu);
 
-        for (int idx = 0; idx <= numPoints; idx++) {
-            double theta = meanAnom + (idx / (double) numPoints) * 2 * Math.PI;
-            double r_polar = (a * (1 - e * e)) / (1 + e * Math.cos(theta));
+        // ── Specific angular momentum h⃗ = r⃗ × v⃗ ──────────────────
+        double hx = ry * vz - rz * vy;
+        double hy = rz * vx - rx * vz;
+        double hz = rx * vy - ry * vx;
+        double hMag = Math.sqrt(hx * hx + hy * hy + hz * hz);
 
-            // Position in the orbital plane (XZ plane, Y=0)
-            float x_orb = (float) (r_polar * Math.cos(theta));
-            float z_orb = (float) (r_polar * Math.sin(theta));
+        // ── Eccentricity vector e⃗ = (v⃗ × h⃗)/μ − r̂ ──────────────
+        // v⃗ × h⃗
+        double vhx = vy * hz - vz * hy;
+        double vhy = vz * hx - vx * hz;
+        double vhz = vx * hy - vy * hx;
 
-            // Apply the pre-computed 3D rotation, then offset to sun position
-            Vector3f point = new Vector3f(x_orb, 0.0f, z_orb);
-            orbitalRotation.transform(point);
-            point.add(sunPosition);
+        double ex = vhx / mu - rx / rMag;
+        double ey = vhy / mu - ry / rMag;
+        double ez = vhz / mu - rz / rMag;
+        double e = Math.sqrt(ex * ex + ey * ey + ez * ez);
 
-            orbitPositions.add(point);
+        // ── Inclination: i = acos(h_y / |h⃗|) ───────────────────────
+        // In our coordinate system Y is "up", so the reference plane is XZ.
+        // h⃗ is perpendicular to the orbital plane; its Y-component tells
+        // us how tilted the plane is relative to XZ.
+        double cosI = hy / hMag;
+        cosI = Math.max(-1.0, Math.min(1.0, cosI)); // clamp for safety
+        double inc = Math.acos(cosI);
+
+        // ── Longitude of ascending node Ω ────────────────────────────
+        // The ascending node direction n⃗ lies in the reference plane (XZ)
+        // and is perpendicular to the Y-axis projection of h⃗.
+        // n⃗ = (−hz, 0, hx)  (cross product of ŷ × h⃗)
+        double nx = -hz;
+        double ny = 0.0;
+        double nz = hx;
+        double nMag = Math.sqrt(nx * nx + nz * nz);
+
+        double ascNode;
+        if (nMag < 1e-10) {
+            // Inclination ≈ 0 → ascending node is undefined, set to 0
+            ascNode = 0.0;
+        } else {
+            // Ω = atan2(n_x, n_z)  — angle from +Z axis to n⃗ in the XZ plane
+            ascNode = Math.atan2(nx, nz);
+            if (ascNode < 0) ascNode += 2.0 * Math.PI;
         }
 
-        return orbitPositions;
+        // ── Argument of pericenter ω ─────────────────────────────────
+        // ω is the angle from the ascending node to the eccentricity vector,
+        // measured in the orbital plane.
+        double argPeri;
+        if (nMag < 1e-10) {
+            // i ≈ 0: ω is measured from the +Z axis in the XZ plane
+            argPeri = Math.atan2(ex, ez);
+            if (argPeri < 0) argPeri += 2.0 * Math.PI;
+        } else {
+            // cos(ω) = (n⃗ · e⃗) / (|n⃗| · |e⃗|)
+            double cosW = (nx * ex + nz * ez) / (nMag * e);
+            cosW = Math.max(-1.0, Math.min(1.0, cosW));
+
+            // Determine sign of sin(ω) from (n⃗ × e⃗) · ĥ
+            // n⃗ × e⃗ in the Y component: nx*ez − nz*ex
+            double sinW = (nx * ez - nz * ex) / (nMag * e);
+
+            argPeri = Math.atan2(sinW, cosW);
+            if (argPeri < 0) argPeri += 2.0 * Math.PI;
+        }
+
+        // ── True anomaly θ ───────────────────────────────────────────
+        // Angle from eccentricity vector to position vector in the orbital plane
+        double theta;
+        if (e < 1e-9) {
+            // Circular orbit: true anomaly measured from ascending node
+            if (nMag < 1e-10) {
+                theta = Math.atan2(rx, rz); // from +Z in XZ plane
+            } else {
+                double cosT = (nx * rx + nz * rz) / (nMag * rMag);
+                cosT = Math.max(-1.0, Math.min(1.0, cosT));
+                double sinT = (nx * rz - nz * rx) / (nMag * rMag);
+                theta = Math.atan2(sinT, cosT);
+            }
+        } else {
+            double cosT = (ex * rx + ey * ry + ez * rz) / (e * rMag);
+            cosT = Math.max(-1.0, Math.min(1.0, cosT));
+            // Sign from (e⃗ × r⃗) · ĥ
+            // e⃗ × r⃗ Y-component: ex*rz − ez*rx
+            double sinT = (ex * rz - ez * rx) / (e * rMag);
+            // Actually we need the dot with ĥ direction.
+            // (e⃗ × r⃗) = (ey*rz - ez*ry, ez*rx - ex*rz, ex*ry - ey*rx)
+            double crossY = ez * rx - ex * rz;
+            // If crossY · hy > 0, sinT > 0 (prograde)
+            // But simpler: just use atan2 with the correct sign
+            // The radial velocity v_r = (r⃗ · v⃗)/|r| determines sign
+            double rDotV = rx * vx + ry * vy + rz * vz;
+            // If rDotV > 0, body is moving away from pericenter → θ > 0
+            // (for prograde orbit)
+            theta = Math.atan2(sinT, cosT);
+            if (theta < 0) theta += 2.0 * Math.PI;
+        }
+
+        // ── Eccentric anomaly E ──────────────────────────────────────
+        // tan(E/2) = sqrt((1−e)/(1+e)) · tan(θ/2)
+        double E;
+        if (e < 1e-9) {
+            E = theta;
+        } else {
+            double sinHalfE = Math.sqrt((1.0 - e) / (1.0 + e)) * Math.sin(theta / 2.0);
+            double cosHalfE = Math.cos(theta / 2.0);
+            E = 2.0 * Math.atan2(sinHalfE, cosHalfE);
+            if (E < 0) E += 2.0 * Math.PI;
+        }
+
+        // ── Mean anomaly M = E − e·sin(E) ──────────────────────────
+        double meanAnom = E - e * Math.sin(E);
+        if (meanAnom < 0) meanAnom += 2.0 * Math.PI;
+
+        // ── Store derived elements ───────────────────────────────────
+        body.setOrbitalParameters(a, e, inc, ascNode, argPeri, meanAnom);
+
+        System.out.printf("  %-8s derived elements: a=%.4e m, e=%.6f, i=%.4f°, Ω=%.4f°, ω=%.4f°, M=%.4f°%n",
+                body.getName(),
+                a, e,
+                Math.toDegrees(inc),
+                Math.toDegrees(ascNode),
+                Math.toDegrees(argPeri),
+                Math.toDegrees(meanAnom));
     }
 
     /** Get the current time scale multiplier. */
