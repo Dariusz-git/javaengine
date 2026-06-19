@@ -16,7 +16,7 @@ import org.lwjgl.opengl.GL30;
 
 import java.awt.Font;
 import java.nio.FloatBuffer;
-import java.time.LocalDate;
+import java.time.LocalDateTime;
 import java.time.LocalTime;
 import java.time.format.DateTimeFormatter;
 import java.util.List;
@@ -83,9 +83,8 @@ public class Renderer {
     private PhysicsEngine physicsEngine;
     private boolean sliderDragging = false; // true when user is dragging the slider handle
 
-    // ---- Earth date/time (captured at startup from Windows system clock) ----
-    private final LocalDate earthDateAtStart = LocalDate.now();
-    private final LocalTime earthTimeAtStart = LocalTime.now();
+    // ---- Earth date/time (captured at startup, advanced by simulation time) ----
+    private final LocalDateTime earthStartDateTime = LocalDateTime.now();
     private static final DateTimeFormatter DATE_FMT = DateTimeFormatter.ofPattern("yyyy:MM:dd");
     private static final DateTimeFormatter TIME_FMT = DateTimeFormatter.ofPattern("h:mma");
 
@@ -718,10 +717,12 @@ public class Renderer {
             }
         }
 
-        // --- Bottom-left: Earth date & time (captured at startup) ---
+        // --- Bottom-left: Earth date & time (advanced by simulation time) ---
         if (physicsEngine != null) {
-            String dateStr = earthDateAtStart.format(DATE_FMT);
-            String timeStr = earthTimeAtStart.format(TIME_FMT).toLowerCase();
+            long elapsedSec = (long) physicsEngine.getSimElapsedSeconds();
+            LocalDateTime simNow = earthStartDateTime.plusSeconds(elapsedSec);
+            String dateStr = simNow.format(DATE_FMT);
+            String timeStr = simNow.format(TIME_FMT).toLowerCase();
             String earthText = dateStr + "   " + timeStr;
             tr.drawStringWithBackground(earthText, left, 10, titleColor, bgColor, padding);
         }

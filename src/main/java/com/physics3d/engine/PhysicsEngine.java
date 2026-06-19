@@ -18,7 +18,7 @@ import java.util.Queue;
  */
 public class PhysicsEngine {
     private static final double GRAVITATIONAL_CONSTANT = 6.674e-11;
-    private static final double DEFAULT_TIME_SCALE = 1e5; // Default simulation speed
+    private static final double DEFAULT_TIME_SCALE = 60; // Default simulation speed (60× real-time)
     private static final double MIN_TIME_SCALE = 0;       // Pause
     private static final double MAX_TIME_SCALE = 1e8;    // Upper limit to prevent instability
     private static final double MIN_DISTANCE = 1e6; // Avoid singularity
@@ -30,6 +30,10 @@ public class PhysicsEngine {
     private static final double SECONDS_PER_YEAR = 365.25 * 24.0 * 3600.0;
     private static final double INITIAL_UNIVERSE_AGE_YEARS = 13.823473323e9;
     private double universeAgeSeconds = INITIAL_UNIVERSE_AGE_YEARS * SECONDS_PER_YEAR;
+
+    // Simulation-elapsed time: how many simulated seconds have passed since the app started.
+    // Used to advance the Earth date/time clock displayed in the HUD.
+    private double simElapsedSeconds = 0.0;
 
     private final List<CelestialBody> bodies;
     private double[][] forces; // [bodyIndex][x,y,z]
@@ -59,6 +63,9 @@ public class PhysicsEngine {
 
         // Accumulate simulated time into the universal age tracker
         universeAgeSeconds += dt;
+
+        // Also track simulation-elapsed time for the Earth clock display
+        simElapsedSeconds += dt;
 
         // Update positions and velocities (Euler integration, in double)
         for (int i = 0; i < n; i++) {
@@ -531,6 +538,12 @@ public class PhysicsEngine {
     /** Get the current age of the universe in years (accumulated simulated time). */
     public double getUniverseAgeYears() {
         return universeAgeSeconds / SECONDS_PER_YEAR;
+    }
+
+    /** Get the number of simulated seconds elapsed since the app started.
+     *  Used to advance the Earth date/time clock in the HUD. */
+    public double getSimElapsedSeconds() {
+        return simElapsedSeconds;
     }
 
     /** Reset the universe age back to its initial value. */
