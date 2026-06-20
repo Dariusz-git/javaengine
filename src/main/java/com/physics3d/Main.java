@@ -292,13 +292,17 @@ public class Main {
                 deltaTime = 0.05;
             }
             
-            // Update physics
+            // Update physics (uses deltaTime * timeScale internally)
             engine.update(deltaTime);
 
             // Advance each body's axial rotation (spin around its own axis).
             // Done after physics so the renderer sees the up-to-date angle.
+            // The rotation must use the SAME scaled time as the orbital motion,
+            // otherwise the spin would be 60× slower than the orbit (which is
+            // exactly what makes realistic rotation periods invisible).
+            double simDelta = deltaTime * engine.getTimeScale();
             for (CelestialBody body : engine.getBodies()) {
-                body.advanceRotation(deltaTime);
+                body.advanceRotation(simDelta);
             }
 
             // Render
