@@ -41,8 +41,6 @@ public class Renderer {
 
     // Scale factor applied to world coordinates before rendering (meters -> scene units)
     private static final float WORLD_SCALE = 1e-9f;
-    // Minimum drawn radius in scene units so bodies stay visible at system scale
-    private static final float MIN_DRAW_RADIUS = 5e9f * WORLD_SCALE;
     // Sun position in world space (updated each frame from the body list)
     private Vector3f sunPosition = new Vector3f(0, 0, 0);
     // Lighting parameters
@@ -235,7 +233,10 @@ public class Renderer {
         GLFW.glfwSetScrollCallback(window, (w, xoffset, yoffset) -> {
             float factor = (float) Math.pow(1.1, -yoffset);
             camDistance *= factor;
-            if (camDistance < 10.0f) camDistance = 10.0f;
+            // Lower bound matches the auto-fit minimum (Mercury: drawRadius 0.4 * 3 = 1.2,
+            // clamped up to 2.0).  This lets the user zoom in close enough to inspect
+            // the smallest body without clipping through its surface.
+            if (camDistance < 2.0f) camDistance = 2.0f;
             if (camDistance > 100000.0f) camDistance = 100000.0f;
         });
 
@@ -530,21 +531,30 @@ public class Renderer {
             float x = pos.x * WORLD_SCALE;
             float y = pos.y * WORLD_SCALE;
             float z = pos.z * WORLD_SCALE;
-            float r = Math.max(body.getRadius() * WORLD_SCALE, MIN_DRAW_RADIUS);
+            float r = body.getDrawRadius();
 
             float[] baseColor = colorFor(body.getName());
 
             if ("Sun".equals(body.getName())) {
                 // Sun: emit light, no shading. Disable lighting for the Sun itself.
                 GL11.glDisable(GL11.GL_LIGHTING);
-                GL11.glColor3f(baseColor[0], baseColor[1], baseColor[2]);
+                int sunTex = body.getTextureId();
+                if (sunTex != -1) {
+                    GL11.glEnable(GL11.GL_TEXTURE_2D);
+                    GL11.glBindTexture(GL11.GL_TEXTURE_2D, sunTex);
+                    // Warm tint so the sun texture looks luminous
+                    GL11.glColor3f(1.0f, 0.95f, 0.85f);
+                } else {
+                    GL11.glColor3f(baseColor[0], baseColor[1], baseColor[2]);
+                }
                 GL11.glPushMatrix();
                 GL11.glTranslatef(x, y, z);
                 applyAxialRotation(body);
                 drawSphere(r, SPHERE_STACKS, SPHERE_SLICES);
                 GL11.glPopMatrix();
-                // Draw atmospheric glow around the Sun
-                drawSunGlow(x, y, z, r);
+                if (sunTex != -1) {
+                    GL11.glDisable(GL11.GL_TEXTURE_2D);
+                }
                 GL11.glEnable(GL11.GL_LIGHTING);
             } else {
                 // Planets: use OpenGL lighting with per-vertex normals
@@ -624,6 +634,36 @@ public class Renderer {
                         GL11.glDepthMask(true);
                     }
                 }
+
+                // ---- Saturn rings (alpha-blended ring overlay) ----
+                // Rings are tied to Saturn's axial tilt (so they stay aligned
+                // with the planet) but they do NOT spin with the body — the
+                // ring texture is drawn without applying the rotation angle.
+                int ringTex = body.getRingTextureId();
+                if (ringTex != -1) {
+                    GL11.glDepthMask(false);
+                    GL11.glEnable(GL11.GL_BLEND);
+                    GL11.glBlendFunc(GL11.GL_SRC_ALPHA, GL11.GL_ONE_MINUS_SRC_ALPHA);
+                    GL11.glDisable(GL11.GL_LIGHTING);
+                    GL11.glEnable(GL11.GL_TEXTURE_2D);
+                    GL11.glBindTexture(GL11.GL_TEXTURE_2D, ringTex);
+                    GL11.glColor4f(1, 1, 1, 1.0f);
+
+                    GL11.glPushMatrix();
+                    GL11.glTranslatef(x, y, z);
+                    // Apply ONLY the axial tilt — not the spin angle — so the
+                    // rings stay aligned with Saturn's equatorial plane.
+                    applyRingTilt(body);
+                    // Inner radius slightly above Saturn's surface, outer
+                    // radius ~2.3× the planet radius (matches real proportions).
+                    drawRing(r * 1.2f, r * 2.3f, 96);
+                    GL11.glPopMatrix();
+
+                    GL11.glDisable(GL11.GL_TEXTURE_2D);
+                    GL11.glDisable(GL11.GL_BLEND);
+                    GL11.glDepthMask(true);
+                    GL11.glEnable(GL11.GL_LIGHTING);
+                }
             }
         }
 
@@ -658,30 +698,7 @@ public class Renderer {
         GL11.glEnable(GL11.GL_DEPTH_TEST);
     }
 
-    /** Draw a soft glow around the Sun using additive blending. */
-    private void drawSunGlow(float x, float y, float z, float r) {
-        GL11.glEnable(GL11.GL_BLEND);
-        GL11.glBlendFunc(GL11.GL_SRC_ALPHA, GL11.GL_ONE); // additive
-        GL11.glDepthMask(false);
-
-        // Draw several concentric transparent shells for a corona effect
-        int layers = 6;
-        for (int layer = 1; layer <= layers; layer++) {
-            float shellRadius = r * (1.0f + layer * 0.6f);
-            float alpha = 0.18f / layer;
-            // Warm corona color
-            GL11.glColor4f(1.0f, 0.85f, 0.4f, alpha);
-            GL11.glPushMatrix();
-            GL11.glTranslatef(x, y, z);
-            drawSphere(shellRadius, 12, 16);
-            GL11.glPopMatrix();
-        }
-
-        GL11.glDepthMask(true);
-        GL11.glDisable(GL11.GL_BLEND);
-    }
-
-
+    
     /**
      * Lazy-initialise the bitmap font renderer. Done lazily because we need
      * a current GL context, which only exists after the window is created.
@@ -717,6 +734,22 @@ public class Renderer {
                     selectedIndex = (selectedIndex + 1) % n;
                 }
                 trackingEnabled = true;
+
+                // Auto-fit zoom: pick a camera distance proportional to the
+                // body's drawn radius so it fills a comfortable portion of
+                // the viewport.  drawRadius is in scene units, so multiplying
+                // by 3 gives a nice "planet fills ~1/3 of the screen" framing.
+                // Small bodies get a minimum distance so they don't disappear
+                // into the depth buffer; large bodies (Sun) get a generous
+                // distance so the corona/halo doesn't dominate the view.
+                CelestialBody picked = bodies.get(selectedIndex);
+                float pickedRadius = picked.getDrawRadius();
+                if (pickedRadius <= 0.0f) {
+                    // Fallback for bodies without an explicit draw radius
+                    pickedRadius = picked.getRadius() * WORLD_SCALE;
+                }
+                float fitDistance = Math.max(pickedRadius * 3.0f, 2.0f);
+                camDistance = fitDistance;
             }
         }
 
@@ -1043,6 +1076,45 @@ public class Renderer {
         if (angle != 0.0) {
             GL11.glRotated(Math.toDegrees(angle), 0.0, 1.0, 0.0);
         }
+    }
+
+    /**
+     * Apply ONLY the axial tilt (no spin) to the current OpenGL model-view
+     * matrix. Used for drawing Saturn's rings, which must stay aligned with
+     * the planet's equatorial plane but should not rotate with the body.
+     */
+    private void applyRingTilt(CelestialBody body) {
+        double tilt = body.getAxialTilt();
+        if (tilt != 0.0) {
+            GL11.glRotated(Math.toDegrees(tilt), 1.0, 0.0, 0.0);
+        }
+    }
+
+    /**
+     * Draw a flat ring (annulus) in the local XZ plane, centered at the
+     * current origin. The ring is built as a triangle strip with the given
+     * number of segments. UVs run from 0 at the inner edge to 1 at the outer
+     * edge so the alpha texture can fade the ring naturally.
+     */
+    private void drawRing(float innerRadius, float outerRadius, int segments) {
+        GL11.glBegin(GL11.GL_TRIANGLE_STRIP);
+        for (int i = 0; i <= segments; i++) {
+            float theta = (float) (2.0 * Math.PI * i / segments);
+            float cosT = (float) Math.cos(theta);
+            float sinT = (float) Math.sin(theta);
+            float u = (float) i / segments;
+
+            // Outer vertex
+            GL11.glTexCoord2f(u, 1.0f);
+            GL11.glNormal3f(0, 1, 0);
+            GL11.glVertex3f(cosT * outerRadius, 0, sinT * outerRadius);
+
+            // Inner vertex
+            GL11.glTexCoord2f(u, 0.0f);
+            GL11.glNormal3f(0, 1, 0);
+            GL11.glVertex3f(cosT * innerRadius, 0, sinT * innerRadius);
+        }
+        GL11.glEnd();
     }
 
     /** Initialize the starfield: random points on a large sphere with varied colors. */

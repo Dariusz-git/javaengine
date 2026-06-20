@@ -165,6 +165,21 @@ public class Main {
                 BodyType.ICE_GIANT
         );
 
+        // -----------------------------------------------------------------
+        // Display radii (R^2.5 root scaling, Earth = 1.0 reference)
+        // These are purely visual — the physical radius used for gravity
+        // remains the real value in metres.  drawRadius is in scene units.
+        // -----------------------------------------------------------------
+        sun.setDrawRadius(10.0f);
+        mercury.setDrawRadius(0.4f);
+        venus.setDrawRadius(0.9f);
+        earth.setDrawRadius(1.0f);
+        mars.setDrawRadius(0.6f);
+        jupiter.setDrawRadius(3.5f);
+        saturn.setDrawRadius(3.0f);
+        uranus.setDrawRadius(2.0f);
+        neptune.setDrawRadius(2.0f);
+
         // Initialize ephemeris client (NASA JPL Horizons / ESA stub)
         EphemerisClient ephemerisClient = new EphemerisClient();
         System.out.println("EphemerisClient ready — fetchPositions() returned: "
@@ -271,6 +286,13 @@ public class Main {
 
         saturn.setAxialTilt(Math.toRadians(26.73));
         saturn.setRotationPeriod(38_018.0);          // ~10h 33m
+        // Saturn rings: alpha-blended ring overlay. The texture file
+        // `8k_saturn_ring_alpha.png` is auto-discovered by the
+        // `ring_alpha` suffix in TextureManager.COMMON_SUFFIXES.
+        int saturnRingTex = textureManager.getTextureVariant("saturn_ring_alpha");
+        if (saturnRingTex != -1) {
+            saturn.setRingTextureId(saturnRingTex);
+        }
 
         uranus.setAxialTilt(Math.toRadians(97.77));
         uranus.setRotationPeriod(-62_040.0);         // retrograde, ~17h 14m

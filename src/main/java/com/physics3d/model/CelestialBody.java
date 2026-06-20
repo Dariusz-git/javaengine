@@ -14,6 +14,7 @@ public class CelestialBody {
     private Vector3f velocity;
     private float mass;        // in kg
     private float radius;      // in meters
+    private float drawRadius;  // scaled display radius in scene units (set manually)
     private BodyType bodyType; // classification (star, terrestrial, gas/ice giant)
 
     private double semiMajorAxis;      // a
@@ -44,6 +45,8 @@ public class CelestialBody {
     // Earth-specific multi-texture ids (day texture is the primary textureId above)
     private int nightTextureId = -1;
     private int cloudTextureId = -1;
+    // Saturn ring texture id (alpha-blended ring overlay). -1 = no rings.
+    private int ringTextureId = -1;
     // Orbital trail tracking
     private OrbitTrail trail = new OrbitTrail(50000); // Keep last 1000 positions
 
@@ -110,6 +113,14 @@ public class CelestialBody {
     public float getRadius() {
         return radius;
     }
+
+    /** Scaled display radius in scene units (set per-body for visual proportion). */
+    public float getDrawRadius() {
+        return drawRadius;
+    }
+    public void setDrawRadius(float drawRadius) {
+        this.drawRadius = drawRadius;
+    }
     public double getEccentricity() { return eccentricity; }
     public double getSemiMajorAxis() { return semiMajorAxis; }
     public double getInclination() { return inclination; }
@@ -127,6 +138,9 @@ public class CelestialBody {
 
     public int getCloudTextureId() { return cloudTextureId; }
     public void setCloudTextureId(int cloudTextureId) { this.cloudTextureId = cloudTextureId; }
+
+    public int getRingTextureId() { return ringTextureId; }
+    public void setRingTextureId(int ringTextureId) { this.ringTextureId = ringTextureId; }
 
     public void setOrbitalParameters(double a, double e, double i,
                                      double ascNode, double argPeri, double meanAnom) {
