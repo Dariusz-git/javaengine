@@ -20,7 +20,7 @@ public class PhysicsEngine {
     private static final double GRAVITATIONAL_CONSTANT = 6.674e-11;
     private static final double DEFAULT_TIME_SCALE = 60; // Default simulation speed (60× real-time)
     private static final double MIN_TIME_SCALE = 0;       // Pause
-    private static final double MAX_TIME_SCALE = 1e8;    // Upper limit to prevent instability
+    private static final double MAX_TIME_SCALE = 31_536_000.0; // 1 year per real second (upper limit to prevent instability)
     private static final double MIN_DISTANCE = 1e6; // Avoid singularity
 
     private double timeScale = DEFAULT_TIME_SCALE;
