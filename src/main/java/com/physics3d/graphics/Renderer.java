@@ -540,6 +540,7 @@ public class Renderer {
                 GL11.glColor3f(baseColor[0], baseColor[1], baseColor[2]);
                 GL11.glPushMatrix();
                 GL11.glTranslatef(x, y, z);
+                applyAxialRotation(body);
                 drawSphere(r, SPHERE_STACKS, SPHERE_SLICES);
                 GL11.glPopMatrix();
                 // Draw atmospheric glow around the Sun
@@ -554,10 +555,75 @@ public class Renderer {
                 GL11.glMaterialfv(GL11.GL_FRONT_AND_BACK, GL11.GL_SPECULAR, spec);
                 GL11.glMaterialf(GL11.GL_FRONT_AND_BACK, GL11.GL_SHININESS, shininessFor(body.getName()));
 
+                // Bind texture if this body has one. The texture modulates the
+                // lit color via GL_MODULATE, so the per-body tint still applies.
+                int texId = body.getTextureId();
+                boolean textured = texId != -1;
+                if (textured) {
+                    GL11.glEnable(GL11.GL_TEXTURE_2D);
+                    GL11.glBindTexture(GL11.GL_TEXTURE_2D, texId);
+                }
+
                 GL11.glPushMatrix();
                 GL11.glTranslatef(x, y, z);
+                applyAxialRotation(body);
                 drawSphere(r, SPHERE_STACKS, SPHERE_SLICES);
                 GL11.glPopMatrix();
+
+                if (textured) {
+                    GL11.glDisable(GL11.GL_TEXTURE_2D);
+                }
+
+                // ---- Earth multi-texture: night lights + cloud overlay ----
+                int nightTex = body.getNightTextureId();
+                int cloudTex = body.getCloudTextureId();
+                if (nightTex != -1 || cloudTex != -1) {
+                    // Compute sun direction relative to this body (in world space)
+                    Vector3f sunDir = new Vector3f(sunPosition).sub(pos).normalize();
+
+                    // --- Night-lights pass (additive blend, dark side only) ---
+                    if (nightTex != -1) {
+                        GL11.glDepthMask(false);          // don't write depth
+                        GL11.glEnable(GL11.GL_BLEND);
+                        GL11.glBlendFunc(GL11.GL_ONE, GL11.GL_ONE); // additive
+                        GL11.glDisable(GL11.GL_LIGHTING);
+                        GL11.glEnable(GL11.GL_TEXTURE_2D);
+                        GL11.glBindTexture(GL11.GL_TEXTURE_2D, nightTex);
+                        GL11.glColor3f(1, 1, 1);         // full brightness; texture modulates
+
+                        GL11.glPushMatrix();
+                        GL11.glTranslatef(x, y, z);
+                        applyAxialRotation(body);
+                        drawSphereNight(r, SPHERE_STACKS, SPHERE_SLICES, sunDir);
+                        GL11.glPopMatrix();
+
+                        GL11.glDisable(GL11.GL_TEXTURE_2D);
+                        GL11.glDisable(GL11.GL_BLEND);
+                        GL11.glDepthMask(true);
+                        GL11.glEnable(GL11.GL_LIGHTING);
+                    }
+
+                    // --- Cloud overlay pass (alpha blend, fully lit) ---
+                    if (cloudTex != -1) {
+                        GL11.glDepthMask(false);
+                        GL11.glEnable(GL11.GL_BLEND);
+                        GL11.glBlendFunc(GL11.GL_SRC_ALPHA, GL11.GL_ONE_MINUS_SRC_ALPHA);
+                        GL11.glEnable(GL11.GL_TEXTURE_2D);
+                        GL11.glBindTexture(GL11.GL_TEXTURE_2D, cloudTex);
+                        GL11.glColor4f(1, 1, 1, 0.55f);  // semi-transparent clouds
+
+                        GL11.glPushMatrix();
+                        GL11.glTranslatef(x, y, z);
+                        applyAxialRotation(body);
+                        // Slightly larger radius so clouds sit above the surface
+                        drawSphere(r * 1.005f, SPHERE_STACKS, SPHERE_SLICES);
+                        GL11.glPopMatrix();
+
+                        GL11.glDisable(GL11.GL_TEXTURE_2D);
+                        GL11.glDisable(GL11.GL_BLEND);
+                        GL11.glDepthMask(true);
+                    }
+                }
             }
         }
 
@@ -941,6 +1007,44 @@ public class Renderer {
         }
     }
 
+    /**
+     * Apply the body's axial rotation to the current OpenGL model-view matrix.
+     * Must be called AFTER {@code glTranslatef(x,y,z)} (so the rotation pivots
+     * around the body's centre) and BEFORE the sphere draw call.
+     *
+     * <p>The rotation is composed of two parts:
+     * <ol>
+     *   <li><b>Tilt</b> — rotate the spin axis away from the orbital-plane
+     *       normal (Y) by {@code axialTilt} radians around the X axis. This
+     *       gives the body its characteristic obliquity (Earth's 23.4°,
+     *       Uranus' 97.8°, etc.).</li>
+     *   <li><b>Spin</b> — rotate around the (now tilted) spin axis by the
+     *       accumulated {@code rotationAngle}. A negative rotation period
+     *       naturally produces retrograde spin because {@code rotationAngle}
+     *       decreases over time.</li>
+     * </ol>
+     *
+     * <p>Bodies with a rotation period of zero (or no rotation data) are
+     * left untouched, so static bodies still render correctly.
+     */
+    private void applyAxialRotation(CelestialBody body) {
+        double tilt = body.getAxialTilt();
+        double angle = body.getRotationAngle();
+        if (tilt == 0.0 && angle == 0.0) {
+            return;
+        }
+        // 1. Tilt the spin axis away from +Y. We rotate around the X axis so
+        //    that the north pole leans toward +Z (the conventional direction
+        //    for prograde bodies in this simulator's XZ-orbital-plane frame).
+        if (tilt != 0.0) {
+            GL11.glRotated(Math.toDegrees(tilt), 1.0, 0.0, 0.0);
+        }
+        // 2. Spin around the (now tilted) local Y axis.
+        if (angle != 0.0) {
+            GL11.glRotated(Math.toDegrees(angle), 0.0, 1.0, 0.0);
+        }
+    }
+
     /** Initialize the starfield: random points on a large sphere with varied colors. */
     private void initStarfield() {
         if (starsInitialized) return;
@@ -995,24 +1099,82 @@ public class Renderer {
             float r0 = (float) Math.cos(lat0);
             float r1 = (float) Math.cos(lat1);
 
+            // Equirectangular UV: v = 0 at south pole, v = 1 at north pole.
+            float v0 = (float) i / stacks;
+            float v1 = (float) (i + 1) / stacks;
+
             GL11.glBegin(GL11.GL_QUAD_STRIP);
             for (int j = 0; j <= slices; j++) {
                 double lng = 2.0 * Math.PI * (double) j / slices;
                 float xCos = (float) Math.cos(lng);
                 float zSin = (float) Math.sin(lng);
 
+                // u wraps around the sphere; clamp to [0, 1) to avoid sampling the seam twice.
+                float u = (float) j / slices;
+
                 // Vertex on the lower stack edge
                 GL11.glNormal3f(xCos * r0, y0, zSin * r0);
+                GL11.glTexCoord2f(u, v0);
                 GL11.glVertex3f(radius * xCos * r0, radius * y0, radius * zSin * r0);
 
                 // Vertex on the upper stack edge
                 GL11.glNormal3f(xCos * r1, y1, zSin * r1);
+                GL11.glTexCoord2f(u, v1);
                 GL11.glVertex3f(radius * xCos * r1, radius * y1, radius * zSin * r1);
             }
             GL11.glEnd();
         }
 
 
+    }
+
+    /**
+     * Draw a sphere with night-side illumination: vertices facing away from the
+     * sun are bright (city lights), vertices facing the sun are dark.
+     * Uses additive blending so the result composites over the day-lit sphere.
+     */
+    private void drawSphereNight(float radius, int stacks, int slices, Vector3f sunDir) {
+        for (int i = 0; i < stacks; i++) {
+            double lat0 = Math.PI * (-0.5 + (double) i / stacks);
+            double lat1 = Math.PI * (-0.5 + (double) (i + 1) / stacks);
+            float y0 = (float) Math.sin(lat0);
+            float y1 = (float) Math.sin(lat1);
+            float r0 = (float) Math.cos(lat0);
+            float r1 = (float) Math.cos(lat1);
+
+            float v0 = (float) i / stacks;
+            float v1 = (float) (i + 1) / stacks;
+
+            GL11.glBegin(GL11.GL_QUAD_STRIP);
+            for (int j = 0; j <= slices; j++) {
+                double lng = 2.0 * Math.PI * (double) j / slices;
+                float xCos = (float) Math.cos(lng);
+                float zSin = (float) Math.sin(lng);
+
+                float u = (float) j / slices;
+
+                // Lower vertex
+                float nx0 = xCos * r0, ny0 = y0, nz0 = zSin * r0;
+                float dot0 = nx0 * sunDir.x + ny0 * sunDir.y + nz0 * sunDir.z;
+                float night0 = Math.max(0.0f, -dot0);   // bright on dark side
+                night0 *= night0;                          // sharpen terminator
+                GL11.glNormal3f(nx0, ny0, nz0);
+                GL11.glTexCoord2f(u, v0);
+                GL11.glColor3f(night0, night0, night0);
+                GL11.glVertex3f(radius * nx0, radius * ny0, radius * nz0);
+
+                // Upper vertex
+                float nx1 = xCos * r1, ny1 = y1, nz1 = zSin * r1;
+                float dot1 = nx1 * sunDir.x + ny1 * sunDir.y + nz1 * sunDir.z;
+                float night1 = Math.max(0.0f, -dot1);
+                night1 *= night1;
+                GL11.glNormal3f(nx1, ny1, nz1);
+                GL11.glTexCoord2f(u, v1);
+                GL11.glColor3f(night1, night1, night1);
+                GL11.glVertex3f(radius * nx1, radius * ny1, radius * nz1);
+            }
+            GL11.glEnd();
+        }
     }
 
     public boolean shouldClose() {

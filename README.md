@@ -81,6 +81,42 @@ Where:
 - [x] Dynamic distance grid with screen-space adaptive LOD (G to toggle)
 - [ ] Add configuration file support for custom scenarios
 
+## Texture System
+
+Place planet textures in `src/main/resources/textures/`. The `TextureManager` searches for files using multiple patterns (JPG first, then PNG; highest resolution prefix first):
+
+| Pattern           | Example filenames tried                        |
+| ----------------- | ---------------------------------------------- |
+| Exact name        | `earth.jpg`, `earth.png`                       |
+| Common suffix     | `earth_daymap.jpg`, `earth_surface.jpg`        |
+| Resolution prefix | `8k_earth.jpg`, `4k_earth.jpg`, `2k_earth.jpg` |
+| Prefix + suffix   | `8k_earth_daymap.jpg`, `4k_earth_surface.jpg`  |
+
+### Recommended textures (from [Solar System Scope](https://www.solarsystemscope.com/textures/))
+
+| File                       | Body               | Notes                               |
+| -------------------------- | ------------------ | ----------------------------------- |
+| `8k_sun.jpg`               | Sun                |                                     |
+| `8k_mercury.jpg`           | Mercury            |                                     |
+| `8k_venus_surface.jpg`     | Venus (surface)    |                                     |
+| `4k_venus_atmosphere.jpg`  | Venus (atmosphere) | Optional overlay                    |
+| `8k_earth_daymap.jpg`      | Earth (day)        | Primary Earth texture               |
+| `8k_earth_nightmap.jpg`    | Earth (night)      | City lights on dark side            |
+| `8k_earth_clouds.jpg`      | Earth (clouds)     | Semi-transparent cloud overlay      |
+| `8k_mars.jpg`              | Mars               |                                     |
+| `8k_jupiter.jpg`           | Jupiter            |                                     |
+| `8k_saturn.jpg`            | Saturn             |                                     |
+| `8k_saturn_ring_alpha.png` | Saturn rings       | Alpha channel for ring transparency |
+| `2k_uranus.jpg`            | Uranus             |                                     |
+| `2k_neptune.jpg`           | Neptune            |                                     |
+| `8k_moon.jpg`              | Moon               |                                     |
+| `8k_stars.jpg`             | Star background    |                                     |
+| `8k_stars_milky_way.jpg`   | Milky Way          | Optional skybox                     |
+
+> **Note:** `8k_earth_normal_map.tif` and `8k_earth_specular_map.tif` are **not** supported — STBImage cannot decode TIFF. Convert to PNG/JPG if needed.
+
+If a texture file is not found, the engine generates a procedural texture automatically using Simplex noise.
+
 ## Dependencies
 
 - **LWJGL 3.3.3**: OpenGL bindings for Java

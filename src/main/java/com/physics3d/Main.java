@@ -3,6 +3,7 @@ package com.physics3d;
 import com.physics3d.data.EphemerisClient;
 import com.physics3d.engine.PhysicsEngine;
 import com.physics3d.graphics.Renderer;
+import com.physics3d.graphics.TextureManager;
 import com.physics3d.model.BodyType;
 import com.physics3d.model.CelestialBody;
 import org.joml.Vector3f;
@@ -215,7 +216,68 @@ public class Main {
         // Initialize renderer
         Renderer renderer = new Renderer("Solar System Simulator", 1280, 720);
         renderer.setPhysicsEngine(engine);
-        
+
+        // Initialize texture manager AFTER the renderer (which creates the
+        // OpenGL context) and BEFORE the main loop.  For each body we ask
+        // the manager for a texture id; if a PNG with the body's name exists
+        // in src/main/resources/textures/ it will be loaded, otherwise a
+        // procedural texture is generated on the fly.  The id is then
+        // attached to the body so the renderer can bind it during draw.
+        TextureManager textureManager = new TextureManager();
+        textureManager.init();
+        for (CelestialBody body : engine.getBodies()) {
+            int texId = textureManager.getTextureId(body.getName(), body.getBodyType());
+            body.setTextureId(texId);
+        }
+
+        // Earth multi-texture: load day / night / cloud variants.
+        // The day texture is the primary textureId (already set above by
+        // the generic loop, but we override it with the explicit variant
+        // name so the multi-pattern lookup finds "8k_earth_daymap.jpg").
+        int earthDay = textureManager.getTextureVariant("earth_daymap");
+        int earthNight = textureManager.getTextureVariant("earth_nightmap");
+        int earthClouds = textureManager.getTextureVariant("earth_clouds");
+        if (earthDay != -1) earth.setTextureId(earthDay);
+        earth.setNightTextureId(earthNight);
+        earth.setCloudTextureId(earthClouds);
+
+        System.out.println("TextureManager initialized — " + textureManager.getLoadedCount()
+                + " textures loaded from disk, " + textureManager.getProceduralCount()
+                + " generated procedurally.");
+
+        // -----------------------------------------------------------------
+        // Axial rotation (spin around each body's own axis)
+        // -----------------------------------------------------------------
+        // Real-world sidereal rotation periods (seconds) and axial tilts
+        // (obliquity to the orbital plane, radians).  Negative period =
+        // retrograde spin (Venus, Uranus).  Values are from NASA fact sheets.
+        sun.setAxialTilt(Math.toRadians(7.25));
+        sun.setRotationPeriod(2_164_320.0);          // ~25.4 d
+
+        mercury.setAxialTilt(Math.toRadians(0.034));
+        mercury.setRotationPeriod(5_067_014.0);       // ~58.6 d
+
+        venus.setAxialTilt(Math.toRadians(177.4));
+        venus.setRotationPeriod(-20_997_360.0);      // retrograde, ~243 d
+
+        earth.setAxialTilt(Math.toRadians(23.4393));
+        earth.setRotationPeriod(86_164.0905);        // ~23h 56m
+
+        mars.setAxialTilt(Math.toRadians(25.19));
+        mars.setRotationPeriod(88_642.66);           // ~24h 37m
+
+        jupiter.setAxialTilt(Math.toRadians(3.13));
+        jupiter.setRotationPeriod(35_730.0);         // ~9h 55m
+
+        saturn.setAxialTilt(Math.toRadians(26.73));
+        saturn.setRotationPeriod(38_018.0);          // ~10h 33m
+
+        uranus.setAxialTilt(Math.toRadians(97.77));
+        uranus.setRotationPeriod(-62_040.0);         // retrograde, ~17h 14m
+
+        neptune.setAxialTilt(Math.toRadians(28.32));
+        neptune.setRotationPeriod(57_996.0);         // ~16h 6m
+
         // Main simulation loop
         double deltaTime = 0.01; // 10ms per frame
         long lastTime = System.nanoTime();
@@ -232,12 +294,19 @@ public class Main {
             
             // Update physics
             engine.update(deltaTime);
-            
+
+            // Advance each body's axial rotation (spin around its own axis).
+            // Done after physics so the renderer sees the up-to-date angle.
+            for (CelestialBody body : engine.getBodies()) {
+                body.advanceRotation(deltaTime);
+            }
+
             // Render
             renderer.render(engine.getBodies());
         }
         
         renderer.cleanup();
+        textureManager.cleanup();
         System.out.println("Simulation ended");
     }
 
