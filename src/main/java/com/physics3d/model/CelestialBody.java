@@ -109,7 +109,12 @@ public class CelestialBody {
     public float getMass() {
         return mass;
     }
-    
+
+    /** Update the body's mass (kg). Affects gravitational interactions in the physics engine. */
+    public void setMass(float mass) {
+        this.mass = mass;
+    }
+
     public float getRadius() {
         return radius;
     }

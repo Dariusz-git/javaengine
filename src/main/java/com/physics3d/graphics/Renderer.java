@@ -10,16 +10,15 @@ import org.lwjgl.glfw.GLFW;
 import org.lwjgl.glfw.GLFWErrorCallback;
 import org.lwjgl.opengl.GL;
 import org.lwjgl.opengl.GL11;
-import org.lwjgl.opengl.GL15;
-import org.lwjgl.opengl.GL20;
-import org.lwjgl.opengl.GL30;
+
 
 import java.awt.Font;
 import java.nio.FloatBuffer;
 import java.time.LocalDateTime;
-import java.time.LocalTime;
 import java.time.format.DateTimeFormatter;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Queue;
 
 /**
@@ -99,6 +98,42 @@ public class Renderer {
     private double lastMouseX;
     private double lastMouseY;
 
+    // ---- HUD inline editing ----
+    // When editingField is non-null, the user is typing into the corresponding
+    // numeric field of the currently selected body. editBuffer holds the raw
+    // text being typed. The field rectangles (x, y, w, h) are recomputed each
+    // frame inside renderHud() so click hit-testing stays in sync with the
+    // current window size.
+    private enum EditField { MASS, RADIUS, ECCENTRICITY, SEMI_MAJOR_AXIS }
+    private EditField editingField = null;
+    private final StringBuilder editBuffer = new StringBuilder();
+    // Original value (as text) captured when editing starts, so Escape can restore it.
+    private String editOriginalText = "";
+    // Cached rectangles for the four editable fields, in screen coords (y from bottom).
+    // Index matches EditField.ordinal().
+    private final float[][] editFieldRects = new float[EditField.values().length][4];
+    private boolean editRectsValid = false;
+    // Cursor blink timer (seconds since last toggle).
+    private double editCursorBlinkTimer = 0.0;
+    private boolean editCursorVisible = true;
+    /**
+     * True once the user has typed at least one character into the edit
+     * buffer. While false, the next printable character clears the seeded
+     * value first (so typing "31" replaces "1.989e+30" instead of producing
+     * the invalid "1.989e+3031").
+     */
+    private boolean editBufferDirty = false;
+
+    /**
+     * Reference values captured the first time a body is rendered. Used to
+     * display editable fields as multipliers (current / reference) so the
+     * user can type e.g. "2" to make a planet twice as heavy instead of
+     * having to memorise its mass in kilograms. Keyed by body name.
+     */
+    private final Map<String, Float> referenceMass = new HashMap<>();
+    private final Map<String, Float> referenceRadius = new HashMap<>();
+    private final Map<String, Double> referenceSemiMajorAxis = new HashMap<>();
+
     private final Matrix4f viewMatrix = new Matrix4f();
     private final FloatBuffer matrixBuffer = BufferUtils.createFloatBuffer(16);
 
@@ -138,7 +173,20 @@ public class Renderer {
 
         GLFW.glfwSetKeyCallback(window, (w, key, scancode, action, mods) -> {
             if (key == GLFW.GLFW_KEY_ESCAPE && action == GLFW.GLFW_RELEASE) {
-                shouldClose = true;
+                if (editingField != null) {
+                    // Escape while editing: cancel and restore original value.
+                    cancelEditing();
+                } else {
+                    shouldClose = true;
+                }
+            }
+
+            // While editing, route printable keys into the edit buffer instead
+            // of triggering global shortcuts.
+            if (editingField != null && (action == GLFW.GLFW_PRESS || action == GLFW.GLFW_REPEAT)) {
+                if (handleEditingKey(key, mods)) {
+                    return;
+                }
             }
 
             if (key == GLFW.GLFW_KEY_T && action == GLFW.GLFW_RELEASE) {
@@ -185,7 +233,8 @@ public class Renderer {
             this.height = Math.max(1, fbHeight);
         });
 
-        // Mouse button: start/stop dragging to rotate the camera, or slider
+        // Mouse button: start/stop dragging to rotate the camera, or slider,
+        // or activate a HUD value field for inline editing.
         GLFW.glfwSetMouseButtonCallback(window, (w, button, action, mods) -> {
             if (button == GLFW.GLFW_MOUSE_BUTTON_LEFT) {
                 if (action == GLFW.GLFW_PRESS) {
@@ -197,6 +246,9 @@ public class Renderer {
                     if (isClickOnSlider(mx[0], my[0])) {
                         sliderDragging = true;
                         updateTimeScaleFromMouse(mx[0]);
+                    } else if (handleHudFieldClick(mx[0], my[0])) {
+                        // Click landed on an editable HUD value field; editing
+                        // is now active. Don't start camera drag.
                     } else {
                         dragging = true;
                         lastMouseX = mx[0];
@@ -402,6 +454,17 @@ public class Renderer {
 
     public void render(List<CelestialBody> bodies) {
         processInput();
+
+        // Blink the text-edit cursor at ~2 Hz while a field is being edited.
+        if (editingField != null) {
+            editCursorBlinkTimer += 1.0 / 60.0;
+            if (editCursorBlinkTimer >= 0.5) {
+                editCursorBlinkTimer = 0.0;
+                editCursorVisible = !editCursorVisible;
+            }
+        } else {
+            editCursorVisible = true;
+        }
 
         GL11.glClear(GL11.GL_COLOR_BUFFER_BIT | GL11.GL_DEPTH_BUFFER_BIT);
 
@@ -786,6 +849,15 @@ public class Renderer {
         // --- Right side: selected body details ---
         if (selectedIndex >= 0 && selectedIndex < bodies.size()) {
             CelestialBody body = bodies.get(selectedIndex);
+            // Capture reference values the first time we see each body so the
+            // HUD can display editable fields as multipliers (current / reference).
+            // This lets the user type e.g. "2" to double a planet's mass instead
+            // of having to type its mass in kilograms.
+            String bodyName = body.getName();
+            referenceMass.computeIfAbsent(bodyName, k -> body.getMass());
+            referenceRadius.computeIfAbsent(bodyName, k -> body.getRadius());
+            referenceSemiMajorAxis.computeIfAbsent(bodyName, k -> body.getSemiMajorAxis());
+
             float speed = body.getVelocity().length();
             float mass = body.getMass();
             float radius = body.getRadius();
@@ -797,23 +869,100 @@ public class Renderer {
                 }
             }
 
+            // Lines and their associated editable fields (null = not editable).
+            // Order matches the EditField enum: MASS, RADIUS, ECCENTRICITY, SEMI_MAJOR_AXIS.
+            // Editable fields are shown as multipliers relative to the body's
+            // initial reference value (captured above), so the user can type
+            // e.g. "2" to double a planet's mass instead of typing kilograms.
+            float refMass = referenceMass.getOrDefault(bodyName, mass);
+            float refRadius = referenceRadius.getOrDefault(bodyName, radius);
+            double refA = referenceSemiMajorAxis.getOrDefault(bodyName, body.getSemiMajorAxis());
+            float massMult = (refMass != 0f) ? mass / refMass : 1f;
+            float radiusMult = (refRadius != 0f) ? radius / refRadius : 1f;
+            double aMult = (refA != 0.0) ? body.getSemiMajorAxis() / refA : 1.0;
+
             String[] lines = {
                     "Selected: " + body.getName(),
                     String.format("Velocity: %.3e m/s", speed),
-                    String.format("Mass:     %.3e kg", mass),
-                    String.format("Radius:   %.3e m", radius),
+                    String.format("Mass:     %.3fx", massMult),
+                    String.format("Radius:   %.3fx", radiusMult),
                     String.format("Dist Sun: %.3e m", distanceFromSun),
                     String.format("Eccentr.: %.4f", body.getEccentricity()),
-                    String.format("SemiMaj.: %.3e m", body.getSemiMajorAxis())
+                    String.format("SemiMaj.: %.3fx", aMult)
+            };
+            EditField[] fieldForLine = {
+                    null,                       // Selected
+                    null,                       // Velocity
+                    EditField.MASS,             // Mass
+                    EditField.RADIUS,           // Radius
+                    null,                       // Dist Sun
+                    EditField.ECCENTRICITY,     // Eccentricity
+                    EditField.SEMI_MAJOR_AXIS   // SemiMajorAxis
             };
 
             int panelWidth = 320;
             int right = width - panelWidth - 10;
             int panelTop = top;
+
+            // Reset rect cache; will be repopulated below.
+            editRectsValid = false;
+
             for (int i = 0; i < lines.length; i++) {
                 float[] color = (i == 0) ? titleColor : new float[]{0.95f, 0.95f, 0.95f, 1.0f};
-                tr.drawStringWithBackground(lines[i], right, panelTop - (i + 1) * lineHeight, color, bgColor, padding);
+                int y = panelTop - (i + 1) * lineHeight;
+
+                // If this line is currently being edited, swap in the live
+                // edit buffer text so the user sees what they're typing.
+                String displayText = lines[i];
+                if (editingField != null && fieldForLine[i] == editingField) {
+                    displayText = lines[i].split(":")[0] + ": " + editBuffer.toString();
+                    color = new float[]{1.0f, 1.0f, 0.3f, 1.0f};
+                }
+
+                tr.drawStringWithBackground(displayText, right, y, color, bgColor, padding);
+
+                // Track the screen-space rectangle of each editable field so
+                // mouse clicks can be matched against them.
+                if (fieldForLine[i] != null) {
+                    int idx = fieldForLine[i].ordinal();
+                    int textW = tr.stringWidth(displayText);
+                    int textH = tr.getCharHeight();
+                    // Y is already in y-from-bottom coordinates (panelTop = height - 10).
+                    editFieldRects[idx][0] = right - padding;
+                    editFieldRects[idx][1] = y - padding;
+                    editFieldRects[idx][2] = right - padding + textW + 2 * padding;
+                    editFieldRects[idx][3] = y - padding + textH + 2 * padding;
+                }
             }
+            editRectsValid = true;
+
+            // Draw a border around the active editing field (raw GL, since
+            // TextRenderer doesn't expose a border primitive).
+            // IMPORTANT: stay inside the beginFrame/endFrame block so the
+            // orthographic projection remains active. Drawing raw GL here
+            // works because beginFrame() already set up MODELVIEW as identity
+            // and disabled depth test.
+            if (editingField != null) {
+                int idx = editingField.ordinal();
+                float[] r = editFieldRects[idx];
+                float x0 = r[0];
+                float y0 = r[1];
+                float x1 = r[2];
+                float y1 = r[3];
+                drawEditHighlight(x0, y0, x1, y1);
+                drawEditBorder(x0, y0, x1, y1);
+                // Blinking cursor at the end of the edit buffer.
+                if (editCursorVisible) {
+                    String prefix = lines[idxForField(editingField)].split(":")[0] + ": ";
+                    int prefixW = tr.stringWidth(prefix);
+                    int bufferW = tr.stringWidth(editBuffer.toString());
+                    int cursorX = (int) (right - padding + prefixW + bufferW);
+                    int cursorY = panelTop - (idxForField(editingField) + 1) * lineHeight;
+                    drawEditCursor(cursorX, cursorY, tr.getCharHeight());
+                }
+            }
+        } else {
+            editRectsValid = false;
         }
 
         // --- Bottom-left: Earth date & time (advanced by simulation time) ---
@@ -827,11 +976,341 @@ public class Renderer {
         }
 
         // --- Bottom: time speed slider ---
+        // We're still inside the beginFrame/endFrame block from the top of
+        // renderHud(), so the orthographic projection is active. The slider
+        // draws its track/handle via raw GL using the same coordinate space.
         if (physicsEngine != null) {
             renderTimeSlider(tr);
         }
 
         tr.endFrame();
+    }
+
+    /**
+     * Map an EditField enum value to its index in the lines[] array inside
+     * renderHud(). Used to look up the screen position of the field being
+     * edited so we can draw the cursor at the right spot.
+     */
+    private int idxForField(EditField field) {
+        switch (field) {
+            case MASS: return 2;
+            case RADIUS: return 3;
+            case ECCENTRICITY: return 5;
+            case SEMI_MAJOR_AXIS: return 6;
+            default: return -1;
+        }
+    }
+
+    /**
+     * Handle a mouse click on the HUD. Returns true if the click landed on
+     * an editable field (in which case editing is now active and the camera
+     * should NOT start dragging).
+     */
+    private boolean handleHudFieldClick(double mouseX, double mouseY) {
+        if (!editRectsValid) return false;
+        // Convert from GLFW's top-left origin to our y-from-bottom rects.
+        double myFromBottom = height - mouseY;
+        for (int i = 0; i < editFieldRects.length; i++) {
+            float[] r = editFieldRects[i];
+            if (mouseX >= r[0] && mouseX <= r[2] && myFromBottom >= r[1] && myFromBottom <= r[3]) {
+                startEditing(EditField.values()[i]);
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /**
+     * Begin editing the given field. The edit buffer is seeded with the
+     * current value formatted as a plain string so the user can edit it.
+     */
+    private void startEditing(EditField field) {
+        if (physicsEngine == null || selectedIndex < 0) return;
+        List<CelestialBody> bodies = physicsEngine.getBodies();
+        if (selectedIndex >= bodies.size()) return;
+        CelestialBody body = bodies.get(selectedIndex);
+
+        editingField = field;
+        editBuffer.setLength(0);
+        switch (field) {
+            case MASS:
+                // Seed with "1" so the user can type e.g. "2" to double the
+                // current mass. The actual multiplier is computed in
+                // applyEditing() against the current value.
+                editBuffer.append("1");
+                break;
+            case RADIUS:
+                editBuffer.append("1");
+                break;
+            case ECCENTRICITY:
+                // Eccentricity is a unitless ratio, not a multiplier — keep
+                // the absolute value so the user can edit it directly.
+                editBuffer.append(String.format("%.4f", body.getEccentricity()));
+                break;
+            case SEMI_MAJOR_AXIS:
+                editBuffer.append("1");
+                break;
+        }
+        editOriginalText = editBuffer.toString();
+        editCursorBlinkTimer = 0.0;
+        editCursorVisible = true;
+        // The buffer currently holds the seeded value; the next printable
+        // character should replace it rather than append.
+        editBufferDirty = false;
+    }
+
+    /** Format a float in scientific notation, e.g. 1.989e+30. */
+    private String formatScientific(float value) {
+        return String.format("%.3e", value);
+    }
+
+    /**
+     * Handle a key event while editing. Returns true if the key was consumed
+     * (so the caller should not process it as a global shortcut).
+     */
+    private boolean handleEditingKey(int key, int mods) {
+        // Enter: commit the edit.
+        if (key == GLFW.GLFW_KEY_ENTER || key == GLFW.GLFW_KEY_KP_ENTER) {
+            applyEditing();
+            return true;
+        }
+        // Backspace: drop the last character.
+        if (key == GLFW.GLFW_KEY_BACKSPACE) {
+            if (editBuffer.length() > 0) {
+                editBuffer.setLength(editBuffer.length() - 1);
+            }
+            editCursorBlinkTimer = 0.0;
+            editCursorVisible = true;
+            // Once the user starts editing (even by deleting), the buffer is
+            // considered "owned" by them — subsequent typing should append.
+            editBufferDirty = true;
+            return true;
+        }
+        // Delete: clear the whole buffer.
+        if (key == GLFW.GLFW_KEY_DELETE) {
+            editBuffer.setLength(0);
+            editCursorBlinkTimer = 0.0;
+            editCursorVisible = true;
+            editBufferDirty = true;
+            return true;
+        }
+        // Printable characters: digits, '.', 'e', 'E', '+', '-'.
+        char c = glfwKeyToChar(key, mods);
+        if (c != 0) {
+            // First printable character replaces the seeded value so the user
+            // can type a fresh number (e.g. "31") instead of appending to the
+            // existing scientific notation ("1.989e+30" + "31" = invalid).
+            if (!editBufferDirty) {
+                editBuffer.setLength(0);
+                editBufferDirty = true;
+            }
+            editBuffer.append(c);
+            editCursorBlinkTimer = 0.0;
+            editCursorVisible = true;
+            return true;
+        }
+        return false;
+    }
+
+    /** Map a GLFW key code to a printable char, or 0 if not printable. */
+    private char glfwKeyToChar(int key, int mods) {
+        boolean shift = (mods & GLFW.GLFW_MOD_SHIFT) != 0;
+        // Digits 0-9
+        if (key >= GLFW.GLFW_KEY_0 && key <= GLFW.GLFW_KEY_9) {
+            return (char) ('0' + (key - GLFW.GLFW_KEY_0));
+        }
+        // Letters (used for 'e' / 'E' in scientific notation)
+        if (key >= GLFW.GLFW_KEY_A && key <= GLFW.GLFW_KEY_Z) {
+            char base = (char) ('a' + (key - GLFW.GLFW_KEY_A));
+            return shift ? Character.toUpperCase(base) : base;
+        }
+        // Period / comma (some layouts)
+        if (key == GLFW.GLFW_KEY_PERIOD) return '.';
+        if (key == GLFW.GLFW_KEY_COMMA) return '.';
+        // Plus / minus
+        if (key == GLFW.GLFW_KEY_MINUS || key == GLFW.GLFW_KEY_KP_SUBTRACT) return '-';
+        if (key == GLFW.GLFW_KEY_EQUAL || key == GLFW.GLFW_KEY_KP_ADD) return shift ? '+' : '=';
+        if (key == GLFW.GLFW_KEY_KP_ADD) return '+';
+        if (key == GLFW.GLFW_KEY_SPACE) return ' ';
+        return 0;
+    }
+
+    /**
+     * Commit the current edit buffer to the underlying body. Invalid input
+     * (non-numeric, out of range) is silently ignored and editing stays
+     * active so the user can correct it.
+     */
+    private void applyEditing() {
+        if (editingField == null || physicsEngine == null) return;
+        List<CelestialBody> bodies = physicsEngine.getBodies();
+        if (selectedIndex < 0 || selectedIndex >= bodies.size()) {
+            cancelEditing();
+            return;
+        }
+        CelestialBody body = bodies.get(selectedIndex);
+
+        String text = editBuffer.toString().trim();
+        if (text.isEmpty()) {
+            cancelEditing();
+            return;
+        }
+
+        try {
+            switch (editingField) {
+                case MASS: {
+                    // The buffer holds a multiplier (e.g. "2" = double the
+                    // current mass). Multiply against the current value so
+                    // the user can iteratively scale a planet up or down.
+                    float multiplier = Float.parseFloat(text);
+                    if (multiplier <= 0 || !Float.isFinite(multiplier)) return;
+                    float newMass = body.getMass() * multiplier;
+                    body.setMass(newMass);
+                    break;
+                }
+                case RADIUS: {
+                    float multiplier = Float.parseFloat(text);
+                    if (multiplier <= 0 || !Float.isFinite(multiplier)) return;
+                    float newRadius = body.getDrawRadius() * multiplier;
+                    body.setDrawRadius(newRadius);
+                    break;
+                }
+                case ECCENTRICITY: {
+                    // Eccentricity is a unitless ratio, not a multiplier —
+                    // accept the absolute value directly.
+                    double newE = Double.parseDouble(text);
+                    if (newE < 0 || newE >= 1 || !Double.isFinite(newE)) return;
+                    // Preserve other orbital elements; only change eccentricity.
+                    body.setOrbitalParameters(
+                            body.getSemiMajorAxis(),
+                            newE,
+                            body.getInclination(),
+                            body.getAscendingNode(),
+                            body.getArgOfPericenter(),
+                            body.getMeanAnomaly()
+                    );
+                    // Recompute the orbit so the trail visualization matches.
+                    CelestialBody sun = findSun(bodies);
+                    if (sun != null) body.recalculateOrbit(physicsEngine, sun);
+                    break;
+                }
+                case SEMI_MAJOR_AXIS: {
+                    // Multiplier against the current semi-major axis so the
+                    // user can move a planet closer to / further from the sun
+                    // without typing astronomical distances.
+                    double multiplier = Double.parseDouble(text);
+                    if (multiplier <= 0 || !Double.isFinite(multiplier)) return;
+                    double newA = body.getSemiMajorAxis() * multiplier;
+                    body.setOrbitalParameters(
+                            newA,
+                            body.getEccentricity(),
+                            body.getInclination(),
+                            body.getAscendingNode(),
+                            body.getArgOfPericenter(),
+                            body.getMeanAnomaly()
+                    );
+                    CelestialBody sun = findSun(bodies);
+                    if (sun != null) body.recalculateOrbit(physicsEngine, sun);
+                    break;
+                }
+            }
+        } catch (NumberFormatException ex) {
+            // Invalid number; keep editing so the user can fix it.
+            return;
+        }
+
+        // Success: leave editing mode.
+        editingField = null;
+        editBuffer.setLength(0);
+        editOriginalText = "";
+        editBufferDirty = false;
+    }
+
+    /** Cancel the current edit and restore the original value. */
+    private void cancelEditing() {
+        editingField = null;
+        editBuffer.setLength(0);
+        editOriginalText = "";
+        editBufferDirty = false;
+    }
+
+    /** Find the Sun body in the list (used as the primary for orbital recalc). */
+    private CelestialBody findSun(List<CelestialBody> bodies) {
+        for (CelestialBody b : bodies) {
+            if ("Sun".equals(b.getName())) return b;
+        }
+        return null;
+    }
+
+    /**
+     * Draw a yellow border around the active editing field using raw GL.
+     * Coordinates are in y-from-bottom space (same as the rect cache).
+     */
+    /**
+     * Draw a semi-transparent gray background behind the active editing field
+     * to visually indicate which value is selected.
+     */
+    private void drawEditHighlight(float x0, float y0, float x1, float y1) {
+        GL11.glDisable(GL11.GL_TEXTURE_2D);
+        GL11.glDisable(GL11.GL_LIGHTING);
+        GL11.glDisable(GL11.GL_DEPTH_TEST);
+        GL11.glEnable(GL11.GL_BLEND);
+        GL11.glBlendFunc(GL11.GL_SRC_ALPHA, GL11.GL_ONE_MINUS_SRC_ALPHA);
+
+        GL11.glColor4f(0.5f, 0.5f, 0.5f, 0.3f); // semi-transparent gray
+        GL11.glBegin(GL11.GL_QUADS);
+        GL11.glVertex2f(x0, y0);
+        GL11.glVertex2f(x1, y0);
+        GL11.glVertex2f(x1, y1);
+        GL11.glVertex2f(x0, y1);
+        GL11.glEnd();
+
+        GL11.glEnable(GL11.GL_DEPTH_TEST);
+        GL11.glDisable(GL11.GL_BLEND);
+        GL11.glEnable(GL11.GL_TEXTURE_2D);
+    }
+
+    private void drawEditBorder(float x0, float y0, float x1, float y1) {
+        GL11.glDisable(GL11.GL_TEXTURE_2D);
+        GL11.glDisable(GL11.GL_LIGHTING);
+        GL11.glDisable(GL11.GL_DEPTH_TEST);
+        GL11.glEnable(GL11.GL_BLEND);
+        GL11.glBlendFunc(GL11.GL_SRC_ALPHA, GL11.GL_ONE_MINUS_SRC_ALPHA);
+
+        GL11.glLineWidth(2.0f);
+        GL11.glColor4f(1.0f, 0.85f, 0.2f, 1.0f); // warm yellow
+        GL11.glBegin(GL11.GL_LINE_LOOP);
+        GL11.glVertex2f(x0, y0);
+        GL11.glVertex2f(x1, y0);
+        GL11.glVertex2f(x1, y1);
+        GL11.glVertex2f(x0, y1);
+        GL11.glEnd();
+
+        GL11.glEnable(GL11.GL_DEPTH_TEST);
+        GL11.glDisable(GL11.GL_BLEND);
+        GL11.glEnable(GL11.GL_TEXTURE_2D);
+    }
+
+    /**
+     * Draw a thin vertical cursor line at the end of the edit buffer.
+     * Coordinates are in screen space (x from left, y from bottom).
+     */
+    private void drawEditCursor(int x, int y, int height) {
+        GL11.glDisable(GL11.GL_TEXTURE_2D);
+        GL11.glDisable(GL11.GL_LIGHTING);
+        GL11.glDisable(GL11.GL_DEPTH_TEST);
+        GL11.glEnable(GL11.GL_BLEND);
+        GL11.glBlendFunc(GL11.GL_SRC_ALPHA, GL11.GL_ONE_MINUS_SRC_ALPHA);
+
+        GL11.glLineWidth(1.5f);
+        GL11.glColor4f(1.0f, 1.0f, 1.0f, 1.0f);
+        GL11.glBegin(GL11.GL_LINES);
+        GL11.glVertex2f(x, y);
+        GL11.glVertex2f(x, y + height);
+        GL11.glEnd();
+
+        GL11.glEnable(GL11.GL_DEPTH_TEST);
+        GL11.glDisable(GL11.GL_BLEND);
+        GL11.glEnable(GL11.GL_TEXTURE_2D);
     }
 
     /**
@@ -944,14 +1423,10 @@ public class Renderer {
         // Hint below slider
         tr.drawStringWithBackground("UP/DOWN: adjust | SPACE: pause | R: reset", sx, sy - lineHeight - 2, hintColor, bgColor, padding);
 
-        // Draw slider track (background)
-        tr.beginFrame(width, height); // already in a frame, but we draw with GL directly
-        // We need to draw the slider using raw GL since TextRenderer only does text.
-        // Switch to 2D ortho for slider drawing (already set up by beginFrame).
-        // Actually, we're already in the beginFrame/endFrame block, so ortho is set.
-        // We need to draw GL primitives here. Let's draw them.
-
-        // Draw track background
+        // Draw slider track (background).
+        // We're already inside the beginFrame/endFrame block from renderHud(),
+        // so the orthographic projection is active. Draw the slider using raw
+        // GL primitives directly — no nested beginFrame() call.
         GL11.glDisable(GL11.GL_TEXTURE_2D);
         GL11.glColor4f(0.2f, 0.2f, 0.2f, 0.8f);
         GL11.glBegin(GL11.GL_QUADS);
