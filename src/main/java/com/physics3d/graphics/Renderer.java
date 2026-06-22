@@ -1158,20 +1158,22 @@ public class Renderer {
         try {
             switch (editingField) {
                 case MASS: {
-                    // The buffer holds a multiplier (e.g. "2" = double the
-                    // current mass). Multiply against the current value so
-                    // the user can iteratively scale a planet up or down.
+                    // The buffer holds a multiplier against the body's
+                    // ORIGINAL reference mass (captured the first time the
+                    // body was rendered). Typing "1" always restores the
+                    // reference mass; typing "2" doubles it; typing "0.5"
+                    // halves it — independent of the current value.
                     float multiplier = Float.parseFloat(text);
                     if (multiplier <= 0 || !Float.isFinite(multiplier)) return;
-                    float newMass = body.getMass() * multiplier;
-                    body.setMass(newMass);
+                    float refMass = referenceMass.getOrDefault(body.getName(), body.getMass());
+                    body.setMass(refMass * multiplier);
                     break;
                 }
                 case RADIUS: {
                     float multiplier = Float.parseFloat(text);
                     if (multiplier <= 0 || !Float.isFinite(multiplier)) return;
-                    float newRadius = body.getDrawRadius() * multiplier;
-                    body.setDrawRadius(newRadius);
+                    float refRadius = referenceRadius.getOrDefault(body.getName(), body.getDrawRadius());
+                    body.setDrawRadius(refRadius * multiplier);
                     break;
                 }
                 case ECCENTRICITY: {
@@ -1194,12 +1196,14 @@ public class Renderer {
                     break;
                 }
                 case SEMI_MAJOR_AXIS: {
-                    // Multiplier against the current semi-major axis so the
-                    // user can move a planet closer to / further from the sun
-                    // without typing astronomical distances.
+                    // Multiplier against the body's ORIGINAL reference
+                    // semi-major axis (captured the first time the body was
+                    // rendered). Typing "1" always restores the reference
+                    // orbit; typing "2" doubles the distance from the sun.
                     double multiplier = Double.parseDouble(text);
                     if (multiplier <= 0 || !Double.isFinite(multiplier)) return;
-                    double newA = body.getSemiMajorAxis() * multiplier;
+                    double refA = referenceSemiMajorAxis.getOrDefault(body.getName(), body.getSemiMajorAxis());
+                    double newA = refA * multiplier;
                     body.setOrbitalParameters(
                             newA,
                             body.getEccentricity(),

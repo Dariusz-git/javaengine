@@ -55,20 +55,6 @@ src/
         └── PhysicsEngineTest.java # Unit tests
 ```
 
-## Physics Implementation
-
-The engine uses Newton's law of universal gravitation:
-
-```
-F = G * (m1 * m2) / r²
-```
-
-Where:
-
-- G = 6.674 × 10⁻¹¹ N·m²/kg²
-- m1, m2 = masses of the bodies
-- r = distance between bodies
-
 ## Future Enhancements
 
 - [x] Add more celestial bodies (Venus, Jupiter, Saturn, etc.)
@@ -78,7 +64,7 @@ Where:
 - [x] Add time acceleration/deceleration controls
 - [x] Improve rendering with textures and lighting
 - [x] Dynamic orbit fading (1 years) and white color
-- [x] Dynamic distance grid with screen-space adaptive LOD (G to toggle)
+- [x] Added high resolution textures to planets and sun
 - [ ] Add configuration file support for custom scenarios
 
 ## Texture System
@@ -113,27 +99,8 @@ Place planet textures in `src/main/resources/textures/`. The `TextureManager` se
 | `8k_stars.jpg`             | Star background    |                                     |
 | `8k_stars_milky_way.jpg`   | Milky Way          | Optional skybox                     |
 
-> **Note:** `8k_earth_normal_map.tif` and `8k_earth_specular_map.tif` are **not** supported — STBImage cannot decode TIFF. Convert to PNG/JPG if needed.
-
-If a texture file is not found, the engine generates a procedural texture automatically using Simplex noise.
-
 ## Dependencies
 
 - **LWJGL 3.3.3**: OpenGL bindings for Java
 - **JOML 1.10.5**: Java OpenGL Math Library
 - **JUnit 4.13.2**: Testing framework
-
-## License
-
-MIT License
-
-Plan
-
-Collision detection - wykrywanie zderzeń między planetami
-Konfiguracja ze scenariuszy - wczytać z pliku JSON/XML zamiast hardcode'u
-Lepsza fizyka - Verlet integration zamiast Eulera
-
-Shader rendering - OpenGL shaders zamiast fixed-function pipeline
-Textury planet - dodać realističtyczne tekstury
-Barycentric system - symulacja systemów binarnych
-Particle effects - efekty dla zderzeń lub atmosfery
